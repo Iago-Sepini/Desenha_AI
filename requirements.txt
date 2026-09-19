@@ -1,0 +1,11 @@
+opencv-python
+numpy
+scikit-image
+svgwrite
+groq
+piper-tts
+vosk
+sounddevice
+pyserial
+pygame
+python-dotenv

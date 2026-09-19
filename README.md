@@ -147,6 +147,8 @@ Projeto desenvolvido por estudantes de Informática, divididos em três frentes:
 | João Gabriel Prado de Souza |
 | Thales Silva Garcia |
 
+<img src="https://raw.githubusercontent.com/andreasbm/readme/master/assets/lines/aqua.png" width="100%">
+
 ## 🗺️ Roadmap
 
 - [ ] Módulo 1 — captura, contorno e SVG
@@ -156,10 +158,3 @@ Projeto desenvolvido por estudantes de Informática, divididos em três frentes:
 - [ ] Módulo 5 — rosto 3D reagindo à fala
 - [ ] Integração completa dos módulos
 - [ ] Suporte a outras máquinas além da CNC
-
-
-<div align="center">
-
-Feito com ☕, código e muita curiosidade.
-
-</div>

@@ -85,7 +85,7 @@ desenha-ai/
 
 ```bash
 # 1. Clone o repositório
-git clone https://github.com/<usuario>/desenha-ai.git
+git clone https://github.com/Iago-Sepini/desenha-ai.git
 cd desenha-ai
 
 # 2. Instale as dependências
@@ -117,7 +117,6 @@ python main.py
 
 ## 🎬 Demonstração
 
-> 📹 *Vídeo demonstrativo em breve.*
 >
 > `docs/demo.mp4`
 

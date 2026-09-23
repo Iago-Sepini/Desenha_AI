@@ -8,6 +8,47 @@ Entradas mais recentes primeiro.
 
 ---
 
+## Cache guardava o nome antigo do assistente
+
+**23/09/2026** · `data/cache/respostas.json`
+
+### Sintoma
+
+Com a Groq fora do ar, o plano B entrava e o assistente se apresentava como
+**Iago** — nome antigo do projeto. Hoje ele se chama Max (`NOME_ASSISTENTE`, em
+`ai/prompts.py`).
+
+Só acontece quando a API falha, então passa despercebido em teste normal e
+aparece justo na feira, se a internet cair.
+
+### Causa
+
+As respostas foram gravadas quando o assistente ainda se chamava Iago. O cache
+guarda o **texto pronto**, então não acompanha mudanças no prompt.
+
+Havia também uma entrada `"bob_esponja"` (com underline) cujo conteúdo era a
+resposta de "não entendi seu desenho" — um plano B que já nascia falhando. Repare
+que ela convivia com `"bob esponja"` (com espaço): o `_key()` normaliza espaços,
+mas underline não é espaço, então as duas são chaves diferentes.
+
+### Correção
+
+Nome atualizado nas três entradas que o citavam, e a entrada `"bob_esponja"`
+removida. O conteúdo das demais foi preservado em vez de apagar o arquivo, para
+não ficar sem plano B nenhum.
+
+### Atenção
+
+O cache não se atualiza sozinho quando o prompt muda. Ao mexer no
+`ai/prompts.py` — principalmente em nome, tom ou regras de apresentação — vale
+conferir se as respostas guardadas ainda combinam.
+
+Vale também para o Módulo 1: se a visão devolver rótulos com underline
+(`bob_esponja`), eles viram chaves separadas das com espaço e o cache racha em
+duas entradas para o mesmo desenho.
+
+---
+
 ## Marcador da CNC contaminava o histórico da conversa
 
 **23/09/2026** · `ai/llm.py`
@@ -92,47 +133,3 @@ intervalo, o `wait()` só retorna quando disserem "continuar" — o `Speaker.wai
 não tem timeout.
 
 ---
-
-## Chave de API era da xAI, não da Groq
-
-**23/09/2026** · `.env`
-
-### Sintoma
-
-```
-[LLM] erro: Error code: 401 - {'error': {'message': 'Invalid API Key', ...}}
-```
-
-O chat não respondia nada.
-
-### Causa
-
-A chave no `.env` começava com `xai-`, que é prefixo da **xAI (Grok)**. O projeto
-usa a **Groq**, cujas chaves começam com `gsk_`. São duas empresas diferentes com
-nomes quase idênticos:
-
-| | Groq | Grok |
-|---|---|---|
-| Empresa | Groq Inc. | xAI |
-| O que é | Provedor de inferência (LPU) | Modelo de LLM |
-| Console | console.groq.com | console.x.ai |
-| Prefixo | `gsk_...` | `xai-...` |
-
-O `ai/llm.py` importa `from groq import Groq`, então fala com `api.groq.com`, que
-não reconhece uma chave `xai-`.
-
-### Correção
-
-Chave nova gerada em <https://console.groq.com/keys>, começando com `gsk_`.
-
----
-
-## Faxina: `import` morto e caractere perdido no prompt
-
-**23/09/2026** · `ai/llm.py`, `ai/prompts.py` · commit `aa391c1`
-
-Duas coisas cosméticas, sem efeito funcional:
-
-- `import re` no `ai/llm.py` não era usado por nada.
-- Um `z` solto numa linha do `PERSONA`, entre a descrição do rosto e a seção do
-  projeto. Estava sendo enviado ao modelo em toda requisição.

@@ -2,6 +2,7 @@ import config
 from ai.llm import GroqLLM
 from ai.prompts import EVENTO_CNC_INICIOU, EVENTO_CNC_TERMINOU, EVENTO_NAO_IDENTIFICADO
 from server.state import PARADO, PENSANDO, State
+from voice.listener import Listener
 from voice.speaker import Speaker
 from voice.tts import PiperTTS
 
@@ -28,30 +29,41 @@ def main():
         length_scale=config.PIPER_LENGTH_SCALE,
         sentence_silence=config.PIPER_SENTENCE_SILENCE,
     )
-    speaker = Speaker(tts, on_state=state.set)  # o Speaker atualiza o estado sozinho
+    speaker = Speaker(tts, on_state=state.set)
     llm = GroqLLM()
 
     def responder(gerar):
         """Interrompe a fala atual, mostra 'pensando', gera a resposta e fala."""
         speaker.cancel()
         state.set(PENSANDO)
-        texto = gerar()
+        texto, comando = gerar()
         print(f"[IA] {texto}")
+        if comando:
+            print(f"[Comando detetado] {comando}")
+
         speaker.say(texto)
 
-    # --- pontos de entrada (no projeto final, outros módulos chamam estas funções) ---
-    def processar_desenho(objeto: str):  # Módulo 1 (visão)
+        # Se a IA detetou a autorização do visitante para a CNC começar
+        if comando == "CNC_SIM":
+            conversar(EVENTO_CNC_INICIOU)
+
+    # --- pontos de entrada ---
+    def processar_desenho(objeto: str):
         state.objeto = objeto
         responder(lambda: llm.describe(objeto))
 
-    def conversar(mensagem: str):  # fala do visitante ou aviso do sistema
+    def conversar(mensagem: str):
         responder(lambda: llm.chat(mensagem))
 
-    def comando_voz(cmd: str):  # Módulo 4 (microfone)
-        if cmd == "parar":
+    def comando_voz(texto: str):
+        """Processa tanto os comandos de controlo da fala como a fala direta do visitante."""
+        txt = texto.lower().strip()
+        if txt == "parar":
             speaker.pause()
-        elif cmd == "continuar":
+        elif txt == "continuar":
             speaker.resume()
+        else:
+            conversar(texto)
 
     def novo_visitante():
         speaker.cancel()
@@ -59,6 +71,10 @@ def main():
         state.objeto = None
         state.set(PARADO)
         print("[sistema] conversa zerada")
+
+    # Inicia o módulo de escuta por voz (Módulo 4)
+    listener = Listener(on_text=comando_voz)
+    listener.start()
 
     print(AJUDA)
     try:
@@ -87,6 +103,7 @@ def main():
     except (KeyboardInterrupt, EOFError):
         pass
     finally:
+        listener.stop()
         speaker.cancel()
 
 

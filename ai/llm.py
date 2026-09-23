@@ -1,4 +1,5 @@
 import json
+import re
 from pathlib import Path
 
 from groq import Groq
@@ -8,14 +9,9 @@ from ai.prompts import SYSTEM_PROMPT, montar_pedido
 
 
 class GroqLLM:
-    """Conversa com a Groq mantendo o histórico de um visitante.
+    """Conversa com a Groq mantendo o histórico de um visitante."""
 
-    - chat(mensagem): fala do visitante ou aviso [SISTEMA] -> resposta
-    - describe(objeto): desenho identificado pela visão -> resposta
-    - reset(): novo visitante, zera a conversa
-    """
-
-    MAX_HISTORICO = 20  # mensagens guardadas (as mais antigas saem)
+    MAX_HISTORICO = 20
 
     def __init__(self, api_key=None, model=None, cache_file=None):
         self.api_key = api_key or config.GROQ_API_KEY
@@ -26,23 +22,36 @@ class GroqLLM:
         self.cache_file = Path(cache_file or config.CACHE_FILE)
         self.history = []
 
-    # ---------- API pública ----------
     def reset(self):
         self.history = []
 
-    def chat(self, mensagem: str, plano_b: str = None) -> str:
+    def _processar_resposta(self, texto: str):
+        """Identifica comandos de sistema e limpa o texto para a síntese de voz."""
+        comando = None
+        if "[[CNC_SIM]]" in texto:
+            comando = "CNC_SIM"
+            texto = texto.replace("[[CNC_SIM]]", "")
+        elif "[[CNC_NAO]]" in texto:
+            comando = "CNC_NAO"
+            texto = texto.replace("[[CNC_NAO]]", "")
+        
+        return texto.strip(), comando
+
+    def chat(self, mensagem: str, plano_b: str = None) -> tuple[str, str | None]:
         try:
-            return self._enviar(mensagem)
+            raw_text = self._enviar(mensagem)
+            return self._processar_resposta(raw_text)
         except Exception as e:
             print(f"[LLM] erro: {e}")
-            return plano_b or "Desculpe, não consegui responder agora. Pode repetir?"
+            msg_erro = plano_b or "Desculpe, não consegui responder agora. Pode repetir?"
+            return msg_erro, None
 
-    def describe(self, objeto: str) -> str:
+    def describe(self, objeto: str) -> tuple[str, str | None]:
         pedido = montar_pedido(objeto)
         try:
-            texto = self._enviar(pedido)
-            self._save_cache(objeto, texto)
-            return texto
+            raw_text = self._enviar(pedido)
+            self._save_cache(objeto, raw_text)
+            return self._processar_resposta(raw_text)
         except Exception as e:
             print(f"[LLM] erro: {e}")
             texto = self._load_cache().get(self._key(objeto))
@@ -50,19 +59,18 @@ class GroqLLM:
                 print("[LLM] usando resposta guardada")
             else:
                 texto = f"Não consegui pesquisar sobre {objeto} agora. Vamos tentar de novo?"
-            # registra no histórico para a conversa continuar fazendo sentido
+            
             self.history.append({"role": "user", "content": pedido})
             self.history.append({"role": "assistant", "content": texto})
             self._trim()
-            return texto
+            return self._processar_resposta(texto)
 
-    # ---------- internos ----------
     def _enviar(self, mensagem: str) -> str:
         self.history.append({"role": "user", "content": mensagem})
         try:
             texto = self._ask()
         except Exception:
-            self.history.pop()  # não deixa mensagem sem resposta no histórico
+            self.history.pop()
             raise
         self.history.append({"role": "assistant", "content": texto})
         self._trim()
@@ -71,7 +79,7 @@ class GroqLLM:
     def _ask(self) -> str:
         extra = {}
         if "gpt-oss" in self.model:
-            extra["reasoning_effort"] = "low"  # pensa menos = responde mais rápido
+            extra["reasoning_effort"] = "low"
 
         resp = self.client.chat.completions.create(
             model=self.model,

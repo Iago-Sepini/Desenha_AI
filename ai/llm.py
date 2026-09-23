@@ -38,8 +38,7 @@ class GroqLLM:
 
     def chat(self, mensagem: str, plano_b: str = None) -> tuple[str, str | None]:
         try:
-            raw_text = self._enviar(mensagem)
-            return self._processar_resposta(raw_text)
+            return self._enviar(mensagem)
         except Exception as e:
             print(f"[LLM] erro: {e}")
             msg_erro = plano_b or "Desculpe, não consegui responder agora. Pode repetir?"
@@ -48,32 +47,44 @@ class GroqLLM:
     def describe(self, objeto: str) -> tuple[str, str | None]:
         pedido = montar_pedido(objeto)
         try:
-            raw_text = self._enviar(pedido)
-            self._save_cache(objeto, raw_text)
-            return self._processar_resposta(raw_text)
+            texto, comando = self._enviar(pedido)
+            self._save_cache(objeto, texto)
+            return texto, comando
         except Exception as e:
             print(f"[LLM] erro: {e}")
-            texto = self._load_cache().get(self._key(objeto))
-            if texto:
+            guardado = self._load_cache().get(self._key(objeto))
+            if guardado:
                 print("[LLM] usando resposta guardada")
             else:
-                texto = f"Não consegui pesquisar sobre {objeto} agora. Vamos tentar de novo?"
-            
+                guardado = f"Não consegui pesquisar sobre {objeto} agora. Vamos tentar de novo?"
+
+            # Caches gravados antes desta correção podem conter marcadores, por isso
+            # a resposta guardada passa pelo mesmo tratamento antes de ir ao histórico.
+            texto, comando = self._processar_resposta(guardado)
             self.history.append({"role": "user", "content": pedido})
             self.history.append({"role": "assistant", "content": texto})
             self._trim()
-            return self._processar_resposta(texto)
+            return texto, comando
 
-    def _enviar(self, mensagem: str) -> str:
+    def _enviar(self, mensagem: str) -> tuple[str, str | None]:
+        """Envia a mensagem ao modelo e devolve (texto limpo, comando).
+
+        O histórico guarda o texto já SEM os marcadores [[CNC_*]]. Guardar o texto
+        cru contaminaria o contexto: nas rodadas seguintes o modelo veria que ele
+        mesmo escreveu [[CNC_SIM]] e isso funciona como exemplo, levando-o a repetir
+        o marcador fora de hora. Como o main.py trata esse marcador como autorização
+        do visitante, a CNC ligaria sozinha no meio da conversa.
+        """
         self.history.append({"role": "user", "content": mensagem})
         try:
-            texto = self._ask()
+            bruto = self._ask()
         except Exception:
             self.history.pop()
             raise
+        texto, comando = self._processar_resposta(bruto)
         self.history.append({"role": "assistant", "content": texto})
         self._trim()
-        return texto
+        return texto, comando
 
     def _ask(self) -> str:
         extra = {}

@@ -45,6 +45,12 @@ def main():
 
         # Se a IA detetou a autorização do visitante para a CNC começar
         if comando == "CNC_SIM":
+            # Espera a confirmação acabar de ser falada antes de encadear o evento.
+            # responder() começa com speaker.cancel(), e speaker.say() também cancela
+            # a fala anterior: sem esta espera o áudio da confirmação era cortado
+            # antes de o Piper sequer sintetizar a primeira frase, e o visitante
+            # ouvia silêncio justo depois de dizer que sim.
+            speaker.wait()
             conversar(EVENTO_CNC_INICIOU)
 
     # --- pontos de entrada ---

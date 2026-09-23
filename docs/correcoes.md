@@ -8,6 +8,87 @@ Entradas mais recentes primeiro.
 
 ---
 
+## Escolha do microfone e taxa de amostragem errada
+
+**23/09/2026** · `voice/listener.py`, `config.py`, `main.py`
+
+### Sintoma
+
+O Vosk captava mal a fala, de forma intermitente. Palavras parecidas eram
+confundidas, principalmente as que têm **s, ch, x, z**.
+
+### Causa
+
+Duas coisas somadas.
+
+**1. A taxa que o Windows informa não é confiável.** O `listener.py` lia
+`sd.query_devices(kind='input')['default_samplerate']` e gravava nessa taxa. Só
+que esse valor vem da API MME, que devolve **44100 para todos os aparelhos** por
+ser um valor genérico. A taxa real aparece nas APIs nativas. Medido nesta
+máquina, no mesmo microfone embutido:
+
+```
+MME    diz: 44100 Hz     <- o que o código lia
+WASAPI diz: 48000 Hz     <- a taxa real
+```
+
+Resultado: gravava-se numa taxa que não era a do aparelho, e depois reduzia-se
+para os 16000 Hz do Vosk com `np.interp`, **sem filtro passa-baixa**. Sem esse
+filtro, as frequências acima de 8 kHz dobram para dentro da banda da voz — e quem
+mais sofre são os sibilantes. Dois resamples para voltar ao ponto de partida, o
+segundo deles adicionando distorção.
+
+**2. Não havia como escolher o microfone.** Usava-se sempre o padrão do sistema,
+sem forma de testar ou trocar.
+
+### Correção
+
+Em vez de adivinhar a taxa, o aparelho é aberto **direto em 16000 Hz**, que é a
+que o Vosk exige — assim não há reamostragem nenhuma. Se o aparelho recusar,
+`_abrir_stream()` tenta a taxa informada, 48000 e 44100, nessa ordem, e só então
+o resample antigo entra em ação.
+
+Para escolher o microfone:
+
+| Onde | Como |
+|------|------|
+| `.env` | `MIC_DEVICE=QCY` ou `MIC_DEVICE=14` (vazio = padrão do sistema) |
+| No programa | `/mics` lista e testa, `/mic <n\|nome>` troca, `/mic` mostra o atual |
+
+O `/mics` não confia no valor informado: abre cada aparelho de verdade e marca
+`16k ok` ou `16k nao`. Prefira sempre os `16k ok`.
+
+Trocar não exige reiniciar: o aparelho só é aberto no instante da gravação, então
+o próximo aperto da barra de espaço já usa o novo.
+
+O nome é aceito além do índice porque o índice **muda de posição** quando se liga
+ou desliga um dispositivo — `MIC_DEVICE=14` pode virar outro aparelho no dia
+seguinte.
+
+### Ainda em aberto
+
+Outros três problemas de captação foram diagnosticados e **deixados para depois**:
+
+1. **Normalização pelo pico** (`listener.py`, no `_on_release`): o clique da barra
+   de espaço vira um pico maior que a voz, e o `24000 / max_volume` reduz a fala
+   junto, deixando-a quase inaudível para o Vosk. Intermitente por natureza —
+   depende de bater ou acariciar a tecla. Piora com microfone embutido, que fica
+   no mesmo chassi do teclado. Correção: normalizar por RMS.
+2. **Primeira sílaba cortada**: o aviso "A escutar" é impresso *antes* de abrir o
+   stream, que leva de 25 a 138 ms. Perde-se o início de "sim" ou "parar".
+3. **Barra de espaço é hook global**: ao digitar `/desenho bob esponja` no
+   terminal, cada espaço inicia e para uma gravação.
+
+### Sobre o hardware
+
+Fone Bluetooth é o pior caso para reconhecimento de voz. O perfil alterna entre
+A2DP (tocar o Piper) e HFP (microfone), e o Windows renegocia a cada troca —
+durante a renegociação o áudio simplesmente cai. É a causa mais provável da
+intermitência que não vem do código. Microfone direcional com fio resolve isso e
+ainda ajuda com o ruído da feira.
+
+---
+
 ## Cache guardava o nome antigo do assistente
 
 **23/09/2026** · `data/cache/respostas.json`

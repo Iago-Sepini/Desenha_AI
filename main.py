@@ -1,6 +1,9 @@
+import threading
+
 import config
 from ai.llm import GroqLLM
 from ai.prompts import EVENTO_CNC_INICIOU, EVENTO_CNC_TERMINOU, EVENTO_NAO_IDENTIFICADO
+from face.face import Face
 from server.state import PARADO, PENSANDO, State
 from voice.listener import Listener, listar_microfones, nome_do_microfone
 from voice.speaker import Speaker
@@ -20,6 +23,8 @@ Microfone:
   /mic                mostra o microfone em uso
 Fala:  parar | continuar
 Sair:  sair
+
+Janela do rosto: arraste para a tela do HDMI e aperte F11 para tela cheia.
 """
 
 
@@ -35,9 +40,9 @@ def main():
     )
     speaker = Speaker(tts, on_state=state.set)
     llm = GroqLLM()
+    face = Face()
 
     def responder(gerar):
-        """Interrompe a fala atual, mostra 'pensando', gera a resposta e fala."""
         speaker.cancel()
         state.set(PENSANDO)
         texto, comando = gerar()
@@ -47,7 +52,6 @@ def main():
 
         speaker.say(texto)
 
-        # Se a IA detetou a autorização do visitante para a CNC começar
         if comando == "CNC_SIM":
             # Espera a confirmação acabar de ser falada antes de encadear o evento.
             # responder() começa com speaker.cancel(), e speaker.say() também cancela
@@ -57,7 +61,6 @@ def main():
             speaker.wait()
             conversar(EVENTO_CNC_INICIOU)
 
-    # --- pontos de entrada ---
     def processar_desenho(objeto: str):
         state.objeto = objeto
         responder(lambda: llm.describe(objeto))
@@ -66,7 +69,6 @@ def main():
         responder(lambda: llm.chat(mensagem))
 
     def comando_voz(texto: str):
-        """Processa tanto os comandos de controlo da fala como a fala direta do visitante."""
         txt = texto.lower().strip()
         if txt == "parar":
             speaker.pause()
@@ -132,6 +134,44 @@ def main():
                 conversar(entrada)
     except (KeyboardInterrupt, EOFError):
         pass
+    def loop_console():
+        print(AJUDA)
+        try:
+            while True:
+                entrada = input("> ").strip()
+                if not entrada:
+                    continue
+                baixo = entrada.lower()
+
+                if baixo == "sair":
+                    break
+                elif baixo in ("parar", "continuar"):
+                    comando_voz(baixo)
+                elif baixo == "/novo":
+                    novo_visitante()
+                elif baixo.startswith("/desenho "):
+                    processar_desenho(entrada[len("/desenho "):].strip())
+                elif baixo == "/naoidentificado":
+                    conversar(EVENTO_NAO_IDENTIFICADO)
+                elif baixo == "/cnc inicio":
+                    conversar(EVENTO_CNC_INICIOU)
+                elif baixo == "/cnc fim":
+                    conversar(EVENTO_CNC_TERMINOU)
+                else:
+                    conversar(entrada)
+        except (KeyboardInterrupt, EOFError):
+            pass
+        finally:
+            face.parar()  # fechar o console também fecha o rosto
+
+    listener = Listener(on_text=comando_voz)
+    listener.start()
+
+    thread_console = threading.Thread(target=loop_console, daemon=True)
+    thread_console.start()
+
+    try:
+        face.run()  # bloqueia aqui, na thread principal
     finally:
         listener.stop()
         speaker.cancel()

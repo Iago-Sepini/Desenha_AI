@@ -6,6 +6,7 @@ groq
 piper-tts
 vosk
 sounddevice
+pynput
 pyserial
 pygame
 python-dotenv

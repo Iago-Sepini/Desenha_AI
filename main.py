@@ -5,7 +5,7 @@ from ai.llm import GroqLLM
 from ai.prompts import EVENTO_CNC_INICIOU, EVENTO_CNC_TERMINOU, EVENTO_NAO_IDENTIFICADO
 from face.face import Face
 from server.state import PARADO, PENSANDO, State
-from voice.listener import Listener
+from voice.listener import Listener, listar_microfones, nome_do_microfone
 from voice.speaker import Speaker
 from voice.tts import PiperTTS
 
@@ -17,6 +17,10 @@ Simulações:
   /cnc inicio         a CNC começou a desenhar
   /cnc fim            a CNC terminou
   /novo               novo visitante (zera a conversa)
+Microfone:
+  /mics               lista os microfones e testa qual funciona
+  /mic <n|nome>       troca o microfone (ex.: /mic 14   ou   /mic QCY)
+  /mic                mostra o microfone em uso
 Fala:  parar | continuar
 Sair:  sair
 
@@ -49,6 +53,12 @@ def main():
         speaker.say(texto)
 
         if comando == "CNC_SIM":
+            # Espera a confirmação acabar de ser falada antes de encadear o evento.
+            # responder() começa com speaker.cancel(), e speaker.say() também cancela
+            # a fala anterior: sem esta espera o áudio da confirmação era cortado
+            # antes de o Piper sequer sintetizar a primeira frase, e o visitante
+            # ouvia silêncio justo depois de dizer que sim.
+            speaker.wait()
             conversar(EVENTO_CNC_INICIOU)
 
     def processar_desenho(objeto: str):
@@ -74,6 +84,56 @@ def main():
         state.set(PARADO)
         print("[sistema] conversa zerada")
 
+    # Inicia o módulo de escuta por voz (Módulo 4)
+    listener = Listener(on_text=comando_voz, device=config.MIC_DEVICE)
+    listener.start()
+
+    def mostrar_microfones():
+        """Lista os microfones e testa cada um, para saber qual usar."""
+        print("\n[microfone] a testar os aparelhos...")
+        for m in listar_microfones():
+            marca = "16k ok " if m["aceita_16k"] else "16k nao"
+            atual = "  <== em uso" if m["indice"] == listener.device else ""
+            print(f"  [{m['indice']:2d}] {marca}  {m['nome'][:38]:38s} {m['api']}{atual}")
+
+        if listener.device is None:
+            print(f"\n  em uso: padrão do sistema -> {nome_do_microfone(None)}")
+        print("\n  Troque com /mic <número>. Prefira os marcados '16k ok':")
+        print("  esses gravam direto na taxa do Vosk, sem reamostragem.\n")
+
+    print(AJUDA)
+    try:
+        while True:
+            entrada = input("> ").strip()
+            if not entrada:
+                continue
+            baixo = entrada.lower()
+
+            if baixo == "sair":
+                break
+            elif baixo in ("parar", "continuar"):
+                comando_voz(baixo)
+            elif baixo == "/novo":
+                novo_visitante()
+            elif baixo == "/mics":
+                mostrar_microfones()
+            elif baixo == "/mic":
+                print(f"[microfone] em uso: {nome_do_microfone(listener.device)}")
+            elif baixo.startswith("/mic "):
+                ok, msg = listener.set_device(entrada[len("/mic "):].strip())
+                print(f"[microfone] {'agora a usar: ' + msg if ok else 'não trocou: ' + msg}")
+            elif baixo.startswith("/desenho "):
+                processar_desenho(entrada[len("/desenho "):].strip())
+            elif baixo == "/naoidentificado":
+                conversar(EVENTO_NAO_IDENTIFICADO)
+            elif baixo == "/cnc inicio":
+                conversar(EVENTO_CNC_INICIOU)
+            elif baixo == "/cnc fim":
+                conversar(EVENTO_CNC_TERMINOU)
+            else:
+                conversar(entrada)
+    except (KeyboardInterrupt, EOFError):
+        pass
     def loop_console():
         print(AJUDA)
         try:

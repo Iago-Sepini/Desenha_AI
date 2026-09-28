@@ -10,8 +10,14 @@ load_dotenv(BASE_DIR / ".env")
 
 PIPER_EXE = VOICE_DIR / "piper" / ("piper.exe" if sys.platform == "win32" else "piper")
 PIPER_MODEL = VOICE_DIR / "models" / "br.onnx"
-PIPER_LENGTH_SCALE = 1.0 
+PIPER_LENGTH_SCALE = 1.0
 PIPER_SENTENCE_SILENCE = 0.1
+
+# --- Microfone ---
+# Vazio = usa o padrão do sistema. Aceita o índice (ex.: 14) ou parte do nome
+# do aparelho (ex.: QCY), que é mais estável porque o índice muda quando se
+# liga ou desliga um dispositivo. Use /mics no programa para ver a lista.
+MIC_DEVICE = os.getenv("MIC_DEVICE", "")
 
 # --- IA (Groq) ---
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")

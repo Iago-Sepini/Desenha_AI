@@ -42,24 +42,31 @@ def main():
     llm = GroqLLM()
     face = Face()
 
+    # O console e o push-to-talk rodam em threads diferentes e os dois chegam
+    # aqui. Sem a trava, duas perguntas simultâneas mexiam no llm.history ao
+    # mesmo tempo. É RLock porque o CNC_SIM chama responder() de novo, de
+    # dentro dela, e um Lock comum travaria a si mesmo.
+    trava = threading.RLock()
+
     def responder(gerar):
-        speaker.cancel()
-        state.set(PENSANDO)
-        texto, comando = gerar()
-        print(f"[IA] {texto}")
-        if comando:
-            print(f"[Comando detetado] {comando}")
+        with trava:
+            speaker.cancel()
+            state.set(PENSANDO)
+            texto, comando = gerar()
+            print(f"[IA] {texto}")
+            if comando:
+                print(f"[Comando detetado] {comando}")
 
-        speaker.say(texto)
+            speaker.say(texto)
 
-        if comando == "CNC_SIM":
-            # Espera a confirmação acabar de ser falada antes de encadear o evento.
-            # responder() começa com speaker.cancel(), e speaker.say() também cancela
-            # a fala anterior: sem esta espera o áudio da confirmação era cortado
-            # antes de o Piper sequer sintetizar a primeira frase, e o visitante
-            # ouvia silêncio justo depois de dizer que sim.
-            speaker.wait()
-            conversar(EVENTO_CNC_INICIOU)
+            if comando == "CNC_SIM":
+                # Espera a confirmação acabar de ser falada antes de encadear o evento.
+                # responder() começa com speaker.cancel(), e speaker.say() também cancela
+                # a fala anterior: sem esta espera o áudio da confirmação era cortado
+                # antes de o Piper sequer sintetizar a primeira frase, e o visitante
+                # ouvia silêncio justo depois de dizer que sim.
+                speaker.wait()
+                conversar(EVENTO_CNC_INICIOU)
 
     def processar_desenho(objeto: str):
         state.objeto = objeto
@@ -79,14 +86,11 @@ def main():
 
     def novo_visitante():
         speaker.cancel()
-        llm.reset()
-        state.objeto = None
-        state.set(PARADO)
+        with trava:
+            llm.reset()
+            state.objeto = None
+            state.set(PARADO)
         print("[sistema] conversa zerada")
-
-    # Inicia o módulo de escuta por voz (Módulo 4)
-    listener = Listener(on_text=comando_voz, device=config.MIC_DEVICE)
-    listener.start()
 
     def mostrar_microfones():
         """Lista os microfones e testa cada um, para saber qual usar."""
@@ -101,39 +105,6 @@ def main():
         print("\n  Troque com /mic <número>. Prefira os marcados '16k ok':")
         print("  esses gravam direto na taxa do Vosk, sem reamostragem.\n")
 
-    print(AJUDA)
-    try:
-        while True:
-            entrada = input("> ").strip()
-            if not entrada:
-                continue
-            baixo = entrada.lower()
-
-            if baixo == "sair":
-                break
-            elif baixo in ("parar", "continuar"):
-                comando_voz(baixo)
-            elif baixo == "/novo":
-                novo_visitante()
-            elif baixo == "/mics":
-                mostrar_microfones()
-            elif baixo == "/mic":
-                print(f"[microfone] em uso: {nome_do_microfone(listener.device)}")
-            elif baixo.startswith("/mic "):
-                ok, msg = listener.set_device(entrada[len("/mic "):].strip())
-                print(f"[microfone] {'agora a usar: ' + msg if ok else 'não trocou: ' + msg}")
-            elif baixo.startswith("/desenho "):
-                processar_desenho(entrada[len("/desenho "):].strip())
-            elif baixo == "/naoidentificado":
-                conversar(EVENTO_NAO_IDENTIFICADO)
-            elif baixo == "/cnc inicio":
-                conversar(EVENTO_CNC_INICIOU)
-            elif baixo == "/cnc fim":
-                conversar(EVENTO_CNC_TERMINOU)
-            else:
-                conversar(entrada)
-    except (KeyboardInterrupt, EOFError):
-        pass
     def loop_console():
         print(AJUDA)
         try:
@@ -149,6 +120,13 @@ def main():
                     comando_voz(baixo)
                 elif baixo == "/novo":
                     novo_visitante()
+                elif baixo == "/mics":
+                    mostrar_microfones()
+                elif baixo == "/mic":
+                    print(f"[microfone] em uso: {nome_do_microfone(listener.device)}")
+                elif baixo.startswith("/mic "):
+                    ok, msg = listener.set_device(entrada[len("/mic "):].strip())
+                    print(f"[microfone] {'agora a usar: ' + msg if ok else 'não trocou: ' + msg}")
                 elif baixo.startswith("/desenho "):
                     processar_desenho(entrada[len("/desenho "):].strip())
                 elif baixo == "/naoidentificado":
@@ -164,7 +142,8 @@ def main():
         finally:
             face.parar()  # fechar o console também fecha o rosto
 
-    listener = Listener(on_text=comando_voz)
+    # Inicia o módulo de escuta por voz (Módulo 4)
+    listener = Listener(on_text=comando_voz, device=config.MIC_DEVICE)
     listener.start()
 
     thread_console = threading.Thread(target=loop_console, daemon=True)

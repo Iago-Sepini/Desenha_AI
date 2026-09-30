@@ -44,6 +44,12 @@ atual ou numa fase nova.
 | 27/09 | `28e6694` | Iago | Merge da `main` na `feat/llm-voz` |
 | 28/09 | `25b16c9` | Marcos | Merge do PR #1 na `main` |
 | 29/09 | `84ab4c4` | Marcos | Módulo de visão |
+| 30/09 | `89a0347` | Japola | docs: este histórico de commits |
+| 30/09 | `9a205a2` | Vinicius Ozawa | Merge do PR #2 na `main` |
+| 30/09 | `7b82f19` | Japola | fix: dois loops de console e dois `Listener` |
+| 30/09 | `46e5d4f` | Japola | fix: fala e console chamavam a LLM ao mesmo tempo |
+| 30/09 | `1407715` | Japola | fix: recria o `.env.example` |
+| 30/09 | `9077b04` | Japola | fix: "naturally" e gênero trocado no prompt |
 
 ### Como as branches se juntaram
 
@@ -487,15 +493,112 @@ Pontos de atenção:
 
 ---
 
+## Fase 8: documentação e correções da integração
+
+### `89a0347` · docs: transforma o registro de correções em histórico de commits
+
+**Japola** · 30/09/2026
+
+Transforma o antigo `docs/correcoes.md` neste arquivo. Entrou na `main` pelo
+PR #2 (`9a205a2`, merge de **Vinicius Ozawa**).
+
+### `7b82f19` · fix: main.py tinha dois loops de console e dois Listener
+
+**Japola** · 30/09/2026 · `main.py`
+
+#### Sintoma
+
+A janela do rosto abria e ficava "Não está respondendo". Depois de digitar
+`sair`, o rosto voltava, mas cada aperto da barra de espaço gravava duas vezes e
+o Max respondia duas vezes à mesma fala. E `/mics` e `/mic` paravam de funcionar.
+
+#### Causa
+
+O merge `28e6694` manteve os dois lados do conflito no `main.py`. O loop antigo
+rodava na thread principal e prendia o programa antes do `face.run()`. Quando
+ele terminava, um segundo `Listener` era criado sem parar o primeiro e sem o
+`MIC_DEVICE`, e começava o `loop_console` novo, que não tinha os comandos do
+microfone.
+
+#### Correção
+
+Um único `loop_console`, com todos os comandos, e um único `Listener`, criado
+com `config.MIC_DEVICE`. O `face.run()` volta a ocupar a thread principal logo
+no início.
+
+#### Atenção
+
+Ao resolver conflito no `main.py`, não mantenha os dois lados. O pygame precisa
+da thread principal: todo loop de console tem que ir para dentro do
+`loop_console`.
+
+### `46e5d4f` · fix: fala e console chamavam a LLM ao mesmo tempo
+
+**Japola** · 30/09/2026 · `main.py`, `voice/listener.py`
+
+#### Sintoma
+
+Se alguém falasse pelo push-to-talk enquanto uma pergunta digitada ainda
+esperava a Groq, as respostas podiam sair trocadas ou fora de contexto. E,
+enquanto a IA pensava, o teclado podia ficar lento.
+
+#### Causa
+
+O console e o push-to-talk rodam em threads diferentes e os dois chamam
+`responder()`, sem nenhuma trava. As duas chamadas mexiam no `llm.history` ao
+mesmo tempo.
+
+A transcrição do Vosk e a resposta da IA também rodavam dentro do callback do
+`pynput` (`_on_release`), o que segurava o hook do teclado por vários segundos.
+
+#### Correção
+
+- `main.py`: `responder()` e `novo_visitante()` rodam dentro de um
+  `threading.RLock`. Uma pergunta que chega durante outra espera a vez.
+- `voice/listener.py`: `_on_release()` só fecha o microfone e entrega o áudio a
+  uma thread nova (`_transcrever`). O áudio e a taxa são copiados antes, porque
+  uma nova gravação ou um `/mic` podem trocá-los enquanto a thread trabalha.
+
+#### Atenção
+
+Tem que ser `RLock`, não `Lock`: o `CNC_SIM` chama `responder()` de novo, de
+dentro dela. Com um `Lock` comum, o programa trava para sempre justo quando o
+visitante aceita ver a máquina desenhar.
+
+### `1407715` · fix: recria o .env.example
+
+**Japola** · 30/09/2026 · `.env.example`
+
+O `1d3a602` apagou o arquivo, mas o README e o `ai/llm.py` continuavam mandando
+copiá-lo. Ele volta só com o que o `config.py` lê hoje: `GROQ_API_KEY` e
+`MIC_DEVICE`. As variáveis antigas (`CAMERA_INDEX`, `SERIAL_PORT`,
+`SERIAL_BAUD`, `PIPER_VOICE` e `GROQ_MODEL`) ficaram de fora porque nenhum
+código as usa. Quando a visão e a CNC passarem a ler alguma delas, ela volta
+junto.
+
+### `9077b04` · fix: "naturally" em inglês e gênero trocado no prompt do Max
+
+**Japola** · 30/09/2026 · `ai/prompts.py`
+
+- "naturally" volta a ser "naturalmente" (a troca veio do `2c6205e`).
+- "criada" e "Seja honesta" passam para o masculino, como o resto da persona
+  ("o Max", "brincalhão"), para o modelo não alternar o gênero ao falar de si.
+- A regra do campeão da feira ganha acento e pontuação.
+- Duas linhas só com espaços viram uma linha vazia.
+
+Nenhuma regra de comportamento mudou. O cache não precisou ser refeito: nenhuma
+resposta guardada fala do Max no feminino.
+
+---
+
 ## Pendências conhecidas
 
 Problemas rastreados até um commit e ainda não corrigidos:
 
 | Problema | Onde | Origem |
 |----------|------|--------|
-| Dois loops de console e dois `Listener` | `main.py` | `28e6694` |
-| `.env.example` não existe, mas é citado | raiz, `README.md`, `ai/llm.py` | `1d3a602` |
-| "naturally" em inglês no prompt | `ai/prompts.py` | `2c6205e` |
+| README com pastas que não existem e URL errada | `README.md` | `a9086e3` |
+| `requirements.txt` com pacotes sem uso e sem o `tensorflow` da visão | `requirements.txt` | `1008066`, `84ab4c4` |
 | Normalização pelo pico, primeira sílaba cortada, barra de espaço global | `voice/listener.py` | ver `f373537` |
 | `speaker.wait()` sem timeout | `main.py`, `voice/speaker.py` | ver `455d41a` |
 | Rosto não reage à fala | `face/face.py` | `6b82a33` |

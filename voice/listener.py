@@ -1,4 +1,6 @@
 import json
+import threading
+
 import numpy as np
 import sounddevice as sd
 from vosk import Model, KaldiRecognizer
@@ -218,54 +220,65 @@ class Listener:
                 print("[Microfone] Nenhum dado de áudio capturado.")
                 return
 
-            # Converte os bytes para um array numpy
-            samples = np.frombuffer(bytes(self._audio_data), dtype=np.int16).astype(np.float32)
-            max_volume = np.max(np.abs(samples)) if len(samples) > 0 else 0
+            # A transcrição e a resposta da IA levam segundos. Rodando aqui, dentro
+            # do callback do pynput, elas seguravam o hook do teclado esse tempo
+            # todo. O áudio e a taxa são copiados porque uma nova gravação ou um
+            # /mic podem trocá-los enquanto a thread ainda trabalha.
+            threading.Thread(
+                target=self._transcrever,
+                args=(bytes(self._audio_data), self.sample_rate),
+                daemon=True,
+            ).start()
 
-            if max_volume < 80:
-                print(f"[Microfone] ⚠️ Som muito fraco ou ausente (Volume máx: {max_volume}). Verifique se o microfone está ativo.")
-                return
+    def _transcrever(self, audio: bytes, sample_rate: int):
+        # Converte os bytes para um array numpy
+        samples = np.frombuffer(audio, dtype=np.int16).astype(np.float32)
+        max_volume = np.max(np.abs(samples)) if len(samples) > 0 else 0
 
-            # 1. Normalização do ganho (amplifica o áudio para a faixa ideal do Vosk)
-            samples = samples * (24000.0 / max_volume)
+        if max_volume < 80:
+            print(f"[Microfone] ⚠️ Som muito fraco ou ausente (Volume máx: {max_volume}). Verifique se o microfone está ativo.")
+            return
 
-            # 2. Conversão da taxa de amostragem para 16000Hz exigida pelo Vosk.
-            # Normalmente não corre: _abrir_stream() já tenta gravar direto em 16000.
-            if self.sample_rate != self.target_sr:
-                duration = len(samples) / self.sample_rate
-                target_length = int(duration * self.target_sr)
-                orig_indices = np.linspace(0, len(samples) - 1, num=len(samples))
-                target_indices = np.linspace(0, len(samples) - 1, num=target_length)
-                samples = np.interp(target_indices, orig_indices, samples)
+        # 1. Normalização do ganho (amplifica o áudio para a faixa ideal do Vosk)
+        samples = samples * (24000.0 / max_volume)
 
-            processed_bytes = np.clip(samples, -32768, 32767).astype(np.int16).tobytes()
+        # 2. Conversão da taxa de amostragem para 16000Hz exigida pelo Vosk.
+        # Normalmente não corre: _abrir_stream() já tenta gravar direto em 16000.
+        if sample_rate != self.target_sr:
+            duration = len(samples) / sample_rate
+            target_length = int(duration * self.target_sr)
+            orig_indices = np.linspace(0, len(samples) - 1, num=len(samples))
+            target_indices = np.linspace(0, len(samples) - 1, num=target_length)
+            samples = np.interp(target_indices, orig_indices, samples)
 
-            # 3. Transcrição pelo Vosk
-            rec = KaldiRecognizer(self._model, self.target_sr)
-            text_parts = []
-            chunk_size = 4000
+        processed_bytes = np.clip(samples, -32768, 32767).astype(np.int16).tobytes()
 
-            for i in range(0, len(processed_bytes), chunk_size):
-                chunk = processed_bytes[i:i + chunk_size]
-                if rec.AcceptWaveform(chunk):
-                    res = json.loads(rec.Result())
-                    txt = res.get("text", "").strip()
-                    if txt:
-                        text_parts.append(txt)
+        # 3. Transcrição pelo Vosk
+        rec = KaldiRecognizer(self._model, self.target_sr)
+        text_parts = []
+        chunk_size = 4000
 
-            final_res = json.loads(rec.FinalResult())
-            final_txt = final_res.get("text", "").strip()
-            if final_txt:
-                text_parts.append(final_txt)
+        for i in range(0, len(processed_bytes), chunk_size):
+            chunk = processed_bytes[i:i + chunk_size]
+            if rec.AcceptWaveform(chunk):
+                res = json.loads(rec.Result())
+                txt = res.get("text", "").strip()
+                if txt:
+                    text_parts.append(txt)
 
-            texto = " ".join(text_parts).strip().lower()
+        final_res = json.loads(rec.FinalResult())
+        final_txt = final_res.get("text", "").strip()
+        if final_txt:
+            text_parts.append(final_txt)
 
-            if texto:
-                print(f"[Microfone] Disse: \"{texto}\"")
-                if self.on_text:
-                    self.on_text(texto)
-            else:
-                print("[Microfone] Nenhuma palavra reconhecida. Tente falar de forma clara a uma distância constante do microfone.")
+        texto = " ".join(text_parts).strip().lower()
+
+        if texto:
+            print(f"[Microfone] Disse: \"{texto}\"")
+            if self.on_text:
+                self.on_text(texto)
+        else:
+            print("[Microfone] Nenhuma palavra reconhecida. Tente falar de forma clara a uma distância constante do microfone.")
 
     def _audio_callback(self, indata, frames, time, status):
         if status:

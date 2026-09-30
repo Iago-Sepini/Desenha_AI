@@ -42,24 +42,31 @@ def main():
     llm = GroqLLM()
     face = Face()
 
+    # O console e o push-to-talk rodam em threads diferentes e os dois chegam
+    # aqui. Sem a trava, duas perguntas simultâneas mexiam no llm.history ao
+    # mesmo tempo. É RLock porque o CNC_SIM chama responder() de novo, de
+    # dentro dela, e um Lock comum travaria a si mesmo.
+    trava = threading.RLock()
+
     def responder(gerar):
-        speaker.cancel()
-        state.set(PENSANDO)
-        texto, comando = gerar()
-        print(f"[IA] {texto}")
-        if comando:
-            print(f"[Comando detetado] {comando}")
+        with trava:
+            speaker.cancel()
+            state.set(PENSANDO)
+            texto, comando = gerar()
+            print(f"[IA] {texto}")
+            if comando:
+                print(f"[Comando detetado] {comando}")
 
-        speaker.say(texto)
+            speaker.say(texto)
 
-        if comando == "CNC_SIM":
-            # Espera a confirmação acabar de ser falada antes de encadear o evento.
-            # responder() começa com speaker.cancel(), e speaker.say() também cancela
-            # a fala anterior: sem esta espera o áudio da confirmação era cortado
-            # antes de o Piper sequer sintetizar a primeira frase, e o visitante
-            # ouvia silêncio justo depois de dizer que sim.
-            speaker.wait()
-            conversar(EVENTO_CNC_INICIOU)
+            if comando == "CNC_SIM":
+                # Espera a confirmação acabar de ser falada antes de encadear o evento.
+                # responder() começa com speaker.cancel(), e speaker.say() também cancela
+                # a fala anterior: sem esta espera o áudio da confirmação era cortado
+                # antes de o Piper sequer sintetizar a primeira frase, e o visitante
+                # ouvia silêncio justo depois de dizer que sim.
+                speaker.wait()
+                conversar(EVENTO_CNC_INICIOU)
 
     def processar_desenho(objeto: str):
         state.objeto = objeto
@@ -79,9 +86,10 @@ def main():
 
     def novo_visitante():
         speaker.cancel()
-        llm.reset()
-        state.objeto = None
-        state.set(PARADO)
+        with trava:
+            llm.reset()
+            state.objeto = None
+            state.set(PARADO)
         print("[sistema] conversa zerada")
 
     def mostrar_microfones():

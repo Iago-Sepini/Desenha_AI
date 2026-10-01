@@ -17,8 +17,9 @@ atual ou numa fase nova.
 | Autor no git | Frente | Principais contribuições |
 |--------------|--------|--------------------------|
 | **Iago** (aparece como `Iago Nunes`, `Iago Sepini` e `Iago-Sepini`; é a mesma pessoa, com o mesmo e-mail) | Software, líder | Estrutura inicial, README, voz com Piper, IA com a Groq, push-to-talk com Vosk, rosto em pygame, persona do Max |
-| **Japola** | Software, IA e voz | Branch `feat/llm-voz`: correções no fluxo da CNC, no histórico da LLM e no cache, seleção de microfone |
+| **Japola** | Software, IA e voz | Branch `feat/llm-voz`: correções no fluxo da CNC, no histórico da LLM e no cache, seleção de microfone, troca da voz para "faber" |
 | **Marcos Dias Sepini** | Software, visão | Merge do PR #1 e módulo de visão (reconhecimento de desenhos pela câmera) |
+| **Vinicius Ozawa** | Revisão | Merge dos PRs #2, #3 e #4 na `main` |
 
 ## Linha do tempo
 
@@ -50,6 +51,10 @@ atual ou numa fase nova.
 | 30/09 | `46e5d4f` | Japola | fix: fala e console chamavam a LLM ao mesmo tempo |
 | 30/09 | `1407715` | Japola | fix: recria o `.env.example` |
 | 30/09 | `9077b04` | Japola | fix: "naturally" e gênero trocado no prompt |
+| 30/09 | `efd5921` | Japola | docs: correções da integração neste histórico |
+| 30/09 | `c95551f` | Vinicius Ozawa | Merge do PR #3 na `main` |
+| 01/10 | `e45fc62` | Japola | feat: voz do Piper trocada de "jeff" para "faber" |
+| 01/10 | `9c84e37` | Vinicius Ozawa | Merge do PR #4 na `main` |
 
 ### Como as branches se juntaram
 
@@ -126,7 +131,8 @@ Implementa a fala do assistente:
   o texto em frases de tamanho bom para a entonação.
 - `voice/demo_tts.py`: teste da voz com pausa e retomada.
 - Binários do Piper para Windows (`voice/piper/`) e a voz em português
-  `voice/models/br.onnx`, de cerca de 63 MB.
+  `voice/models/br.onnx`, de cerca de 63 MB (dataset "jeff", trocado pelo
+  "faber" em `e45fc62`).
 - `config.py` com os caminhos do Piper.
 - `vision/camera.py` vazio, reservado para a visão.
 
@@ -589,6 +595,49 @@ junto.
 Nenhuma regra de comportamento mudou. O cache não precisou ser refeito: nenhuma
 resposta guardada fala do Max no feminino.
 
+### `efd5921` · docs: registra as correções da integração no histórico de commits
+
+**Japola** · 30/09/2026
+
+Registra neste arquivo os commits `7b82f19`, `46e5d4f`, `1407715` e `9077b04`.
+Os quatro entraram na `main` pelo PR #3 (`c95551f`, merge de **Vinicius
+Ozawa**).
+
+---
+
+## Fase 9: voz nova
+
+### `e45fc62` · feat: troca a voz do Piper de jeff para faber
+
+**Japola** · 01/10/2026 · `voice/models/br.onnx`, `voice/models/br.onnx.json`
+
+Troca a voz pt-BR do Max, que era do dataset "jeff" (desde o `1b44888`), pela do
+dataset "faber", mais natural.
+
+- `br.onnx`: o modelo novo, com cerca de 63 MB, o mesmo tamanho do anterior.
+- `br.onnx.json`: a configuração do modelo novo.
+  - ganha `phoneme_map` (`c` → `k`) e `speaker_id_map`;
+  - o `phoneme_id_map` vai até o id 151 (o do "jeff" ia até o 160);
+  - `piper_version` passa de 1.3.0 para 1.0.0, a versão com que o "faber" foi
+    treinado;
+  - os parâmetros de inferência continuam iguais (`noise_scale` 0.667,
+    `length_scale` 1, `noise_w` 0.8).
+
+Os nomes dos arquivos não mudaram, então o `config.py` e o `voice/tts.py`
+continuam funcionando sem alteração. Entrou na `main` pelo PR #4 (`9c84e37`,
+merge de **Vinicius Ozawa**).
+
+#### Atenção
+
+O `.onnx` e o `.json` andam juntos. Trocar só um dos dois faz o Piper ler os
+fonemas com a tabela errada: a fala sai embolada ou o Piper falha ao abrir o
+modelo.
+
+O GitHub avisou no push que o `br.onnx` passa de 50 MB, o limite recomendado.
+Cada troca de voz soma mais cerca de 60 MB ao histórico do repositório, e o
+`git clone` fica mais lento para todo mundo. Se a voz for trocada de novo,
+vale passar os `.onnx` para o Git LFS antes.
+
 ---
 
 ## Pendências conhecidas
@@ -603,3 +652,4 @@ Problemas rastreados até um commit e ainda não corrigidos:
 | `speaker.wait()` sem timeout | `main.py`, `voice/speaker.py` | ver `455d41a` |
 | Rosto não reage à fala | `face/face.py` | `6b82a33` |
 | Modelo da visão fora do repositório e visão fora do `main.py` | `vision/` | `84ab4c4` |
+| Modelo de voz com mais de 50 MB fora do Git LFS | `voice/models/` | `1b44888`, `e45fc62` |

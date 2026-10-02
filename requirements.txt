@@ -10,3 +10,6 @@ pynput
 pyserial
 pygame
 python-dotenv
+tensorflow
+tensorflowjs
+scikit-learn

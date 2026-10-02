@@ -5,7 +5,7 @@ import pygame
 
 ASSETS_DIR = Path(__file__).resolve().parent / "assets"
 
-DURACAO_PISCADA_MS = 150        # quanto tempo fica com os olhos fechados
+DURACAO_PISCADA_MS = 210        # quanto tempo fica com os olhos fechados
 INTERVALO_PISCADA = (3.0, 6.0)  # segundos entre piscadas, sorteado
 
 

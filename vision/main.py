@@ -1,55 +1,160 @@
 """
-Reconhecimento de desenhos pela CAMERA, 100% local, com DEBUG de contorno
-e saida em TEXTO no terminal.
+MAIN - junta o treino (train.py) e a camera (camera.py) em um unico programa.
 
-Pre-requisito: rodar train.py antes (gera model.h5 e classes.json).
+Uso:
+    py -3.11 main.py              -> treina se ainda nao existir model.h5, depois abre a camera
+    py -3.11 main.py --treinar    -> forca re-treinar e depois abre a camera
+    py -3.11 main.py --camera     -> so abre a camera (precisa do model.h5)
+    py -3.11 main.py --treinar --sem-camera   -> so treina
+    py -3.11 main.py --web        -> tambem exporta para TensorFlow.js (precisa do tensorflowjs)
+    py -3.11 main.py --cam 1      -> usa a camera de indice 1
 
-Rodar:
-    py -3.11 camera.py
-
-Teclas:
+Teclas na camera:
     q = sair | m = espelhar | + / - = tamanho do quadrado
-    d = liga/desliga janela de debug | c = liga/desliga contornos
-    s = salva um print (pasta capturas/)
+    d = debug | c = contornos | s = salvar print
 """
+import argparse
 import json
 import os
+import subprocess
 import sys
 import time
 import unicodedata
+import urllib.error
+import urllib.parse
+import urllib.request
 from collections import deque
+from pathlib import Path
 
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "2"
 
 import cv2
 import numpy as np
 from tensorflow import keras
+from tensorflow.keras import layers
 
 try:
     sys.stdout.reconfigure(encoding="utf-8")  # acentos no CMD
 except Exception:
     pass
 
-CAM_INDEX = 0           # troque para 1 se usar camera externa
+# =====================================================================
+# CONFIGURACOES
+# =====================================================================
+# Classes: nome oficial do QuickDraw (ingles) -> nome mostrado na tela
+CLASSES = {
+    "soccer ball": "bola",
+    "umbrella": "guarda-chuva",
+    "dog": "cachorro",
+    "cat": "gato",
+    "house": "casa",
+    "car": "carro",
+    "sun": "sol",
+    "apple": "maçã",
+    "fish": "peixe",
+}
+SAMPLES_PER_CLASS = 5000
+EPOCHS = 6
+BASE_URL = "https://storage.googleapis.com/quickdraw_dataset/full/numpy_bitmap/"
+MODEL_PATH = "model.h5"
+CLASSES_PATH = "classes.json"
+
+# Camera
 MIN_CONFIDENCE = 0.55   # abaixo disso mostra "?"
 MIN_INK_PIXELS = 60     # minimo de tinta para considerar que ha desenho
-MIN_CONTOUR_AREA = 40   # ignora contornos menores que isso (ruido)
+MIN_CONTOUR_AREA = 40   # ignora contornos pequenos (ruido)
 SMOOTH_FRAMES = 6       # media das ultimas N previsoes
-STABLE_FRAMES = 8       # frames seguidos iguais para anunciar no terminal
+STABLE_FRAMES = 8       # frames iguais seguidos para anunciar no terminal
 
 
 def sem_acento(texto):
+    """cv2.putText nao desenha acentos."""
     return unicodedata.normalize("NFKD", texto).encode("ascii", "ignore").decode()
 
 
-model = keras.models.load_model("model.h5")
-with open("classes.json", encoding="utf-8") as f:
-    classes_texto = json.load(f)               # com acento (terminal)
-classes = [sem_acento(c) for c in classes_texto]  # sem acento (janela)
+# =====================================================================
+# PARTE 1 - TREINO
+# =====================================================================
+def treinar(exportar_web=False):
+    names = list(CLASSES.keys())
+    data_dir = Path("data")
+    data_dir.mkdir(exist_ok=True)
+
+    # 1. Baixar e montar o dataset
+    X, y = [], []
+    for idx, name in enumerate(names):
+        path = data_dir / f"{name}.npy"
+        if not path.exists():
+            url = BASE_URL + urllib.parse.quote(name) + ".npy"
+            print(f"Baixando {name}...")
+            try:
+                urllib.request.urlretrieve(url, path)
+            except urllib.error.HTTPError:
+                raise SystemExit(
+                    f"Classe '{name}' não existe no QuickDraw. "
+                    "Confira o nome na lista oficial e troque em CLASSES."
+                )
+        arr = np.load(path)[:SAMPLES_PER_CLASS]
+        X.append(arr)
+        y.append(np.full(len(arr), idx))
+
+    X = np.concatenate(X).astype("float32") / 255.0
+    X = X.reshape(-1, 28, 28, 1)
+    y = np.concatenate(y)
+
+    perm = np.random.permutation(len(X))
+    X, y = X[perm], y[perm]
+    split = int(0.9 * len(X))
+    X_train, X_test = X[:split], X[split:]
+    y_train, y_test = y[:split], y[split:]
+
+    # 2. Modelo pequeno (~30 mil parametros)
+    model = keras.Sequential([
+        layers.Input(shape=(28, 28, 1)),
+        layers.Conv2D(16, 3, activation="relu"),
+        layers.MaxPooling2D(),
+        layers.Conv2D(32, 3, activation="relu"),
+        layers.MaxPooling2D(),
+        layers.Flatten(),
+        layers.Dense(64, activation="relu"),
+        layers.Dropout(0.3),
+        layers.Dense(len(names), activation="softmax"),
+    ])
+    model.compile(optimizer="adam",
+                  loss="sparse_categorical_crossentropy",
+                  metrics=["accuracy"])
+    model.summary()
+
+    model.fit(X_train, y_train, epochs=EPOCHS, batch_size=128,
+              validation_data=(X_test, y_test))
+    loss, acc = model.evaluate(X_test, y_test, verbose=0)
+    print(f"Acurácia no teste: {acc:.3f}")
+
+    # 3. Salvar
+    model.save(MODEL_PATH)
+    with open(CLASSES_PATH, "w", encoding="utf-8") as f:
+        json.dump(list(CLASSES.values()), f, ensure_ascii=False)
+    print(f"Modelo salvo em {MODEL_PATH} e classes em {CLASSES_PATH}")
+
+    # 4. (opcional) exportar para o navegador
+    if exportar_web:
+        subprocess.run(["tensorflowjs_converter", "--input_format=keras",
+                        "--quantize_uint8", MODEL_PATH, "web_model"], check=True)
+        print("Exportado para web_model/. Rode: python -m http.server 8000")
+
+
+# =====================================================================
+# PARTE 2 - CAMERA
+# =====================================================================
+def carregar_modelo():
+    model = keras.models.load_model(MODEL_PATH)
+    with open(CLASSES_PATH, encoding="utf-8") as f:
+        classes_texto = json.load(f)
+    return model, classes_texto
 
 
 def preprocess(roi):
-    """Retorna (bitmap28 ou None, mascara_de_tinta, lista_de_contornos)."""
+    """Retorna (bitmap28 ou None, mascara_de_tinta, contornos)."""
     gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
     gray = cv2.GaussianBlur(gray, (5, 5), 0)
     ink = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
@@ -81,13 +186,12 @@ def preprocess(roi):
     return bitmap, ink, contours
 
 
-def predict(bitmap):
+def predict(model, bitmap):
     x = bitmap.astype("float32") / 255.0
     return model.predict(x.reshape(1, 28, 28, 1), verbose=0)[0]
 
 
 def draw_contours(target, contours, offset):
-    """Desenha contornos + caixa de cada um + caixa geral no frame."""
     ox, oy = offset
     if not contours:
         return
@@ -96,15 +200,21 @@ def draw_contours(target, contours, offset):
     for c in shifted:
         x, y, w, h = cv2.boundingRect(c)
         cv2.rectangle(target, (x, y), (x + w, y + h), (255, 0, 255), 1)
-    allpts = np.vstack(shifted)
-    x, y, w, h = cv2.boundingRect(allpts)
+    x, y, w, h = cv2.boundingRect(np.vstack(shifted))
     cv2.rectangle(target, (x, y), (x + w, y + h), (0, 0, 255), 2)
 
 
-def main():
-    cap = cv2.VideoCapture(CAM_INDEX, cv2.CAP_DSHOW)  # CAP_DSHOW = mais rapido no Windows
+def camera(cam_index=0):
+    if not (os.path.exists(MODEL_PATH) and os.path.exists(CLASSES_PATH)):
+        raise SystemExit("model.h5/classes.json não encontrados. Rode: py -3.11 main.py --treinar")
+
+    model, classes_texto = carregar_modelo()
+    classes = [sem_acento(c) for c in classes_texto]
+    DEBUG_WIN = "DEBUG (esq: tinta+contornos | dir: 28x28 da IA)"
+
+    cap = cv2.VideoCapture(cam_index, cv2.CAP_DSHOW)  # CAP_DSHOW = mais rapido no Windows
     if not cap.isOpened():
-        raise SystemExit("Nao consegui abrir a camera. Tente CAM_INDEX = 1.")
+        raise SystemExit("Nao consegui abrir a camera. Tente --cam 1")
 
     mirror = False
     show_debug = True
@@ -112,7 +222,7 @@ def main():
     box_frac = 0.6
     history = deque(maxlen=SMOOTH_FRAMES)
 
-    last_label = None      # ultimo rotulo anunciado no terminal
+    last_label = None
     cand_label = None
     cand_count = 0
     fps_t = time.time()
@@ -140,14 +250,14 @@ def main():
             draw_contours(view, contours, (x0, y0))
 
         label_now = None
+        probs = None
         if bitmap is None:
             history.clear()
             cv2.putText(view, "Desenhe algo no quadrado", (10, 30),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 200, 255), 2)
             model_view = np.zeros((280, 280), np.uint8)
-            probs = None
         else:
-            history.append(predict(bitmap))
+            history.append(predict(model, bitmap))
             probs = np.mean(history, axis=0)
             order = np.argsort(probs)[::-1][:3]
             best = order[0]
@@ -166,7 +276,7 @@ def main():
                             (255, 255, 255), 1)
             model_view = cv2.resize(bitmap, (280, 280), interpolation=cv2.INTER_NEAREST)
 
-        # ---- saida em TEXTO no terminal (so quando muda e esta estavel) ----
+        # Saida em TEXTO no terminal (so quando muda e esta estavel)
         if label_now == cand_label:
             cand_count += 1
         else:
@@ -181,7 +291,7 @@ def main():
                 print(f"[{hora}] Estou vendo: {cand_label} ({conf:.0f}%) "
                       f"| contornos: {len(contours)}")
 
-        # ---- FPS ----
+        # FPS
         now = time.time()
         fps = 0.9 * fps + 0.1 * (1.0 / max(now - fps_t, 1e-6))
         fps_t = now
@@ -190,7 +300,7 @@ def main():
 
         cv2.imshow("Camera", view)
 
-        # ---- janela de DEBUG ----
+        # Janela de DEBUG
         if show_debug:
             ink_color = cv2.cvtColor(ink, cv2.COLOR_GRAY2BGR)
             cv2.drawContours(ink_color, contours, -1, (0, 255, 255), 2)
@@ -210,8 +320,7 @@ def main():
             for i, t in enumerate(lines):
                 cv2.putText(info, sem_acento(t), (8, 22 + i * 24),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 1)
-            cv2.imshow("DEBUG (esq: tinta+contornos | dir: 28x28 da IA)",
-                       np.vstack([panel, info]))
+            cv2.imshow(DEBUG_WIN, np.vstack([panel, info]))
 
         key = cv2.waitKey(1) & 0xFF
         if key == ord("q"):
@@ -223,7 +332,7 @@ def main():
         elif key == ord("d"):
             show_debug = not show_debug
             if not show_debug:
-                cv2.destroyWindow("DEBUG (esq: tinta+contornos | dir: 28x28 da IA)")
+                cv2.destroyWindow(DEBUG_WIN)
         elif key in (ord("+"), ord("=")):
             box_frac = min(0.95, box_frac + 0.05)
         elif key == ord("-"):
@@ -236,6 +345,31 @@ def main():
 
     cap.release()
     cv2.destroyAllWindows()
+
+
+# =====================================================================
+# MAIN
+# =====================================================================
+def main():
+    parser = argparse.ArgumentParser(description="Reconhecimento de desenhos (treino + camera)")
+    parser.add_argument("--treinar", action="store_true", help="força treinar o modelo")
+    parser.add_argument("--camera", action="store_true", help="só abre a camera (sem treinar)")
+    parser.add_argument("--sem-camera", action="store_true", help="não abre a camera depois do treino")
+    parser.add_argument("--web", action="store_true", help="exporta também para TensorFlow.js")
+    parser.add_argument("--cam", type=int, default=0, help="índice da camera (padrão 0)")
+    args = parser.parse_args()
+
+    tem_modelo = os.path.exists(MODEL_PATH) and os.path.exists(CLASSES_PATH)
+
+    if not args.camera and (args.treinar or not tem_modelo):
+        print("=== TREINANDO O MODELO ===")
+        treinar(exportar_web=args.web)
+    else:
+        print(f"Modelo encontrado ({MODEL_PATH}). Pulando o treino.")
+
+    if not args.sem_camera:
+        print("\n=== ABRINDO A CAMERA ===")
+        camera(args.cam)
 
 
 if __name__ == "__main__":

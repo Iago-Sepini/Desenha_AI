@@ -30,8 +30,8 @@ os.environ["TF_CPP_MIN_LOG_LEVEL"] = "2"
 
 import cv2
 import numpy as np
-from tensorflow import keras
-from tensorflow.keras import layers
+import keras
+from keras import layers
 
 try:
     sys.stdout.reconfigure(encoding="utf-8")  # acentos no CMD

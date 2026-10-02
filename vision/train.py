@@ -15,8 +15,8 @@ import urllib.request
 from pathlib import Path
 
 import numpy as np
-from tensorflow import keras
-from tensorflow.keras import layers
+import keras
+from keras import layers
 
 # ---- Classes: nome oficial do QuickDraw (inglês) -> nome mostrado na tela ----
 CLASSES = {

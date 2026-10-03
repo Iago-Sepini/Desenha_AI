@@ -103,17 +103,15 @@ python main.py
  
 | Item | Função no projeto | Modelo |
 |------|-------------------|--------|
-| Câmera | Captura do desenho no papel | `[preencher]` |
+| Câmera | Captura do desenho no papel | `Câmera USB C72` |
 | Microfone | Comandos de voz (*continuar* / *parar*) | `[preencher]` |
-| Caixa de som | Saída da voz do assistente | `[preencher]` |
-| Computador | Executa o sistema completo | `[preencher]` |
-| Tela / monitor | Exibe o rosto 3D | `[preencher]` |
+| Caixa de som | Saída da voz do assistente | `Caixa de Som bluetooth` |
+| Tela / monitor | Exibe o rosto 3D | <a href="https://www.makerhero.com/produto/display-compativel-raspberry-pi-touchscreen-5/?srsltid=AU7gw4VXneuPh6IYfOxRHZ24Os_GXvWyjQjwWg9B2a1CLV7JlWn0u0cTlpk">5 Inch HDMI display</a> |
 | Máquina CNC | Redesenha o traço no papel | `[preencher]` |
-| Placa Arduino | Controla a CNC | `[preencher]` |
-| Drivers de motor | Acionam os motores da CNC | `[preencher]` |
-| Motores | Movimentam os eixos da CNC | `[preencher]` |
-| Fonte de alimentação | Alimenta a CNC e os motores | `[preencher]` |
-| Caneta e suporte | Traçam o desenho na CNC | `[preencher]` |
+| Placa Arduino | Controla a CNC | <a href="https://www.eletrogate.com/uno-r3-smd-ch340?utm_source=Site&utm_medium=GoogleMerchant&utm_campaign=GoogleMerchant&srsltid=AU7gw4U_AABZHFo7u28QLj07QFP_yPp35lSp72aXPbpfFGL_Wccl-l7C_hc">Arduino Nano</a> |
+| Drivers de motor | Acionam os motores da CNC | <a href="https://www.eletrogate.com/cnc-shield-v4-para-arduino-nano?utm_source=Site&utm_medium=GoogleMerchant&utm_campaign=GoogleMerchant&srsltid=AU7gw4WofJhx-iAhHbC9jVka05pDxL8XJbis7FhIia1VyhvgEfCdAorm01s">CNC Shield Arduino</a> |
+| Motores | Movimentam os eixos da CNC | <a href="https://www.mercadolivre.com.br/motor-de-passo-nema-23-toque-126kgf-28a-p-cnc-3gou/p/MLB2053967721?matt_tool=18956390&utm_source=google_shopping&utm_medium=organic&pdp_filters=item_id%3AMLB7712697988&from=gshop">3x Motor de passo 12V</a> |
+| Fonte de alimentação | Alimenta a CNC e os motores | `Fonte 12V` |
 
 ## 🎬 Demonstração
 

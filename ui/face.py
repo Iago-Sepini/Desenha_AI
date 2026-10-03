@@ -2,7 +2,6 @@ import ctypes
 import random
 from pathlib import Path
 
-# Remove distorções de DPI do Windows
 try:
     ctypes.windll.shcore.SetProcessDpiAwareness(2)
 except Exception:
@@ -12,6 +11,7 @@ except Exception:
         pass
 
 import pygame
+from server.state import MODO_DESAFIO, State
 
 ASSETS_DIR = Path(__file__).resolve().parent / "assets"
 
@@ -20,34 +20,33 @@ INTERVALO_PISCADA = (3.0, 6.0)
 
 
 class Face:
-    def __init__(self, display_index=1, titulo="Desenha AI - Rosto"):
+    def __init__(self, state: State = None, display_index=1, titulo="Desenha AI - Rosto"):
+        self.state = state
+
         pygame.init()
+        pygame.font.init()
         pygame.display.set_caption(titulo)
 
         num_monitores = pygame.display.get_num_displays()
-
-        # Se o monitor secundário não for encontrado, usa o principal (0)
         if display_index >= num_monitores:
             display_index = 0
 
-        # Pega o tamanho real do monitor selecionado
         tamanhos = pygame.display.get_desktop_sizes()
         self.tamanho = tamanhos[display_index]
 
-        # CRUCIAL: Criamos a janela informando o monitor de destino diretamente no Pygame
         self.tela = pygame.display.set_mode(
             self.tamanho, pygame.NOFRAME, display=display_index
         )
 
         self.relogio = pygame.time.Clock()
 
+        self.fonte_timer = pygame.font.SysFont("Arial", 56, bold=True)
+        self.fonte_desafio = pygame.font.SysFont("Arial", 32, bold=True)
+        self.fonte_alerta = pygame.font.SysFont("Arial", 36, bold=True)
+
         self._originais = {
-            "abertos": pygame.image.load(
-                ASSETS_DIR / "olhos_abertos.png"
-            ).convert_alpha(),
-            "fechados": pygame.image.load(
-                ASSETS_DIR / "olhos_fechados.png"
-            ).convert_alpha(),
+            "abertos": pygame.image.load(ASSETS_DIR / "olhos_abertos.png").convert_alpha(),
+            "fechados": pygame.image.load(ASSETS_DIR / "olhos_fechados.png").convert_alpha(),
         }
         self._imagens = {}
         self._escalar_imagens()
@@ -104,11 +103,54 @@ class Face:
     def _desenhar(self):
         self.tela.fill((0, 0, 0))
         self.tela.blit(self._imagens[self._quadro_atual], (0, 0))
+
+        self._desenhar_overlay_desafio()
+
         pygame.display.flip()
+
+    def _desenhar_overlay_desafio(self):
+        if not self.state:
+            return
+
+        largura_tela, _ = self.tamanho
+
+        # 1. MODO DESAFIO COM O TEMPO ROLANDO
+        if self.state.modo == MODO_DESAFIO and self.state.desafio_em_andamento:
+            tempo = self.state.tempo_restante
+            palavra = self.state.palavra_sorteada or ""
+
+            overlay_surface = pygame.Surface((largura_tela, 140), pygame.SRCALPHA)
+            overlay_surface.fill((10, 20, 45, 210))
+            self.tela.blit(overlay_surface, (0, 0))
+
+            cor_tempo = (255, 60, 60) if tempo <= 5 else (0, 220, 255)
+            pygame.draw.line(self.tela, cor_tempo, (0, 140), (largura_tela, 140), width=4)
+
+            # Cronômetro Ex: 00:25
+            txt_tempo = self.fonte_timer.render(f"00:{tempo:02d}", True, cor_tempo)
+            rect_tempo = txt_tempo.get_rect(center=(largura_tela // 2, 45))
+            self.tela.blit(txt_tempo, rect_tempo)
+
+            # Instrução Ex: DESENHE: CASA
+            txt_palavra = self.fonte_desafio.render(
+                f"DESENHE UM(A): {palavra.upper()}", True, (255, 255, 255)
+            )
+            rect_palavra = txt_palavra.get_rect(center=(largura_tela // 2, 105))
+            self.tela.blit(txt_palavra, rect_palavra)
+
+        # 2. TEMPO ACABOU: AVISO PARA COLOCAR O PAPEL NA CÂMERA
+        elif self.state.aguardando_posicionamento:
+            overlay_surface = pygame.Surface((largura_tela, 120), pygame.SRCALPHA)
+            overlay_surface.fill((180, 40, 40, 220))
+            self.tela.blit(overlay_surface, (0, 0))
+
+            txt_alerta = self.fonte_alerta.render(
+                "COLOQUE O PAPEL DEBAIXO DA CÂMERA E AVISE!", True, (255, 255, 255)
+            )
+            rect_alerta = txt_alerta.get_rect(center=(largura_tela // 2, 60))
+            self.tela.blit(txt_alerta, rect_alerta)
 
 
 if __name__ == "__main__":
-    # display_index=1 faz o Pygame abrir a janela DIRETAMENTE no 2º monitor.
-    # Se a janela abrir no notebook, mude display_index para 0.
     face = Face(display_index=1)
     face.run()

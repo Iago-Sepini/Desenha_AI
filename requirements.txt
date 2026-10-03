@@ -1,15 +1,30 @@
-opencv-python
-numpy
-scikit-image
-svgwrite
-groq
-piper-tts
-vosk
-sounddevice
-pynput
-pyserial
-pygame
-python-dotenv
-tensorflow
-tensorflowjs
-scikit-learn
+# Python 3.10 (o TensorFlow 2.15 só funciona do 3.9 ao 3.11)
+# Conferir:  py -3.10 -m pip check
+
+# --- Visão computacional / IA (as 4 primeiras são as do seu bibliotecas.txt) ---
+numpy==1.26.4
+opencv-python==4.9.0.80
+tensorflow==2.15.0
+scikit-image==0.24.0
+scikit-learn==1.5.2
+
+# --- Desenho / SVG ---
+svgwrite==1.4.3
+
+# --- Voz e LLM ---
+groq>=0.11.0
+piper-tts==1.2.0
+vosk==0.3.45
+sounddevice==0.5.1
+
+# --- Controle (teclado/mouse, Arduino, áudio/jogo) ---
+pynput==1.7.7
+pyserial==3.5
+pygame==2.6.1
+
+# --- Config ---
+python-dotenv==1.0.1
+
+# --- OPCIONAL ---
+# tensorflow-decision-forests), e o detector/treino não precisam dele.
+# tensorflowjs==4.17.0

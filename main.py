@@ -1,36 +1,61 @@
+# main.py
 import threading
 
 import config
 from ai.llm import GroqLLM
 from ai.prompts import EVENTO_CNC_INICIOU, EVENTO_CNC_TERMINOU, EVENTO_NAO_IDENTIFICADO
-from face.face import Face
 from server.state import PARADO, PENSANDO, State
+from ui.dialogs import confirmar_operador_cnc
+from ui.face import Face
+from ui.manager import GameManager
+from vision.watcher import DrawingWatcher
 from voice.listener import Listener, listar_microfones, nome_do_microfone
 from voice.speaker import Speaker
 from voice.tts import PiperTTS
 
 AJUDA = """
 Digite o que o visitante diria (ex.: oi, quem é você, sim, não).
+Modos de Jogo:
+  /modo livre         ativa o modo livre (sem tempo limite)
+  /desafio            inicia o desafio rápido (30s para desenhar um item sorteado)
+
 Simulações:
-  /desenho <nome>     a visão identificou um desenho (ex.: /desenho bob esponja)
+  /desenho <nome>     simula a visão identificando um desenho (ex.: /desenho casa)
   /naoidentificado    a visão não conseguiu identificar
   /cnc inicio         a CNC começou a desenhar
   /cnc fim            a CNC terminou
-  /novo               novo visitante (zera a conversa)
+  /novo               novo visitante (zera a conversa e o reconhecimento)
+
 Microfone:
   /mics               lista os microfones e testa qual funciona
   /mic <n|nome>       troca o microfone (ex.: /mic 14   ou   /mic QCY)
   /mic                mostra o microfone em uso
 Fala:  parar | continuar
 Sair:  sair
-
-Janela do rosto: arraste para a tela do HDMI e aperte F11 para tela cheia.
 """
 
+FRASES_DESAFIO = (
+    "iniciar desafio",
+    "modo desafio",
+    "jogar desafio",
+    "vamos jogar",
+)
+FRASES_LIVRE = (
+    "modo livre",
+    "desenho livre",
+    "cancelar desafio",
+)
+FRASES_PRONTO = (
+    "pronto",
+    "pode olhar",
+    "coloquei",
+)
 
 def main():
     state = State()
     state.subscribe(lambda e: print(f"[estado] {e}"))
+
+    face = Face(state=state, display_index=1)
 
     tts = PiperTTS(
         config.PIPER_EXE,
@@ -40,47 +65,91 @@ def main():
     )
     speaker = Speaker(tts, on_state=state.set)
     llm = GroqLLM()
-    face = Face()
 
-    # O console e o push-to-talk rodam em threads diferentes e os dois chegam
-    # aqui. Sem a trava, duas perguntas simultâneas mexiam no llm.history ao
-    # mesmo tempo. É RLock porque o CNC_SIM chama responder() de novo, de
-    # dentro dela, e um Lock comum travaria a si mesmo.
     trava = threading.RLock()
+
+    # Callback de atalho para conversas diretas
+    def conversar(mensagem: str):
+        responder(lambda: llm.chat(mensagem))
+
+    # Inicialização da Visão e do Gerenciador de Jogos
+    watcher = DrawingWatcher(on_desenho=lambda obj: game_manager.processar_desenho(obj, responder))
+    watcher.start()
+
+    game_manager = GameManager(
+        state=state,
+        watcher=watcher,
+        llm=llm,
+        conversar_fn=conversar,
+        speaker=speaker,
+    )
 
     def responder(gerar):
         with trava:
             speaker.cancel()
             state.set(PENSANDO)
             texto, comando = gerar()
-            print(f"[IA] {texto}")
-            if comando:
-                print(f"[Comando detetado] {comando}")
 
-            speaker.say(texto)
+            # 1. Identifica marcadores de intenção retornados pela IA
+            tem_confirmar_desenho = "[[CONFIRMAR_DESENHO]]" in texto
+            tem_desafio_sim = "[[DESAFIO_SIM]]" in texto
+            tem_desafio_nao = "[[DESAFIO_NAO]]" in texto
+            tem_cnc_sim = "[[CNC_SIM]]" in texto or comando == "CNC_SIM"
+            tem_cnc_nao = "[[CNC_NAO]]" in texto or comando == "CNC_NAO"
 
-            if comando == "CNC_SIM":
-                # Espera a confirmação acabar de ser falada antes de encadear o evento.
-                # responder() começa com speaker.cancel(), e speaker.say() também cancela
-                # a fala anterior: sem esta espera o áudio da confirmação era cortado
-                # antes de o Piper sequer sintetizar a primeira frase, e o visitante
-                # ouvia silêncio justo depois de dizer que sim.
+            # 2. Limpa todos os marcadores para o Max NÃO lê-los em voz alta
+            texto_limpo = texto
+            for tag in [
+                "[[CONFIRMAR_DESENHO]]",
+                "[[DESAFIO_SIM]]",
+                "[[DESAFIO_NAO]]",
+                "[[CNC_SIM]]",
+                "[[CNC_NAO]]",
+            ]:
+                texto_limpo = texto_limpo.replace(tag, "").strip()
+
+            print(f"[IA] {texto_limpo}")
+            speaker.say(texto_limpo)
+
+            # 3. Executa as ações associadas aos marcadores
+            if tem_confirmar_desenho:
+                print("[Controle] Marcador [[CONFIRMAR_DESENHO]] detectado! Solicitando captura...")
+                if not watcher.confirmar():
+                    conversar(EVENTO_NAO_IDENTIFICADO)
+
+            elif tem_desafio_sim:
+                print("[Controle] Marcador [[DESAFIO_SIM]] detectado! Iniciando novo desafio...")
+                threading.Thread(target=game_manager.iniciar_desafio, daemon=True).start()
+
+            elif tem_desafio_nao:
+                print("[Controle] Marcador [[DESAFIO_NAO]] detectado! Retornando ao Modo Livre.")
+                game_manager.ativar_modo_livre()
+
+            elif tem_cnc_sim:
                 speaker.wait()
-                conversar(EVENTO_CNC_INICIOU)
+                if confirmar_operador_cnc():
+                    print("[CNC] Operador confirmou o início!")
+                    conversar(EVENTO_CNC_INICIOU)
+                else:
+                    print("[CNC] Operador CANCELOU a operação.")
+                    conversar("O envio para a CNC foi cancelado pelo operador. Avise o visitante de forma simpática.")
 
-    def processar_desenho(objeto: str):
-        state.objeto = objeto
-        responder(lambda: llm.describe(objeto))
-
-    def conversar(mensagem: str):
-        responder(lambda: llm.chat(mensagem))
+                game_manager.limpar_estado()
 
     def comando_voz(texto: str):
         txt = texto.lower().strip()
+
         if txt == "parar":
             speaker.pause()
         elif txt == "continuar":
             speaker.resume()
+        # No Modo Desafio (após os 30s), aceita confirmações diretas de posicionamento do papel
+        elif state.aguardando_posicionamento and any(f in txt for f in FRASES_PRONTO):
+            game_manager.confirmar_e_analisar(responder)
+        elif any(f in txt for f in FRASES_DESAFIO):
+            game_manager.iniciar_desafio()
+        elif any(f in txt for f in FRASES_LIVRE):
+            game_manager.ativar_modo_livre()
         else:
             conversar(texto)
 
@@ -88,12 +157,12 @@ def main():
         speaker.cancel()
         with trava:
             llm.reset()
-            state.objeto = None
+            game_manager.limpar_estado()
+            game_manager.ativar_modo_livre()
             state.set(PARADO)
-        print("[sistema] conversa zerada")
+        print("[sistema] conversa zerada (Modo Livre ativado)")
 
     def mostrar_microfones():
-        """Lista os microfones e testa cada um, para saber qual usar."""
         print("\n[microfone] a testar os aparelhos...")
         for m in listar_microfones():
             marca = "16k ok " if m["aceita_16k"] else "16k nao"
@@ -118,6 +187,10 @@ def main():
                     break
                 elif baixo in ("parar", "continuar"):
                     comando_voz(baixo)
+                elif baixo == "/modo livre":
+                    game_manager.ativar_modo_livre()
+                elif baixo == "/desafio":
+                    game_manager.iniciar_desafio()
                 elif baixo == "/novo":
                     novo_visitante()
                 elif baixo == "/mics":
@@ -128,7 +201,7 @@ def main():
                     ok, msg = listener.set_device(entrada[len("/mic "):].strip())
                     print(f"[microfone] {'agora a usar: ' + msg if ok else 'não trocou: ' + msg}")
                 elif baixo.startswith("/desenho "):
-                    processar_desenho(entrada[len("/desenho "):].strip())
+                    game_manager.processar_desenho(entrada[len("/desenho "):].strip(), responder)
                 elif baixo == "/naoidentificado":
                     conversar(EVENTO_NAO_IDENTIFICADO)
                 elif baixo == "/cnc inicio":
@@ -140,9 +213,8 @@ def main():
         except (KeyboardInterrupt, EOFError):
             pass
         finally:
-            face.parar()  # fechar o console também fecha o rosto
+            face.parar()
 
-    # Inicia o módulo de escuta por voz (Módulo 4)
     listener = Listener(on_text=comando_voz, device=config.MIC_DEVICE)
     listener.start()
 
@@ -150,8 +222,10 @@ def main():
     thread_console.start()
 
     try:
-        face.run()  # bloqueia aqui, na thread principal
+        face.run()
     finally:
+        game_manager.parar_timer()
+        watcher.stop()
         listener.stop()
         speaker.cancel()
 

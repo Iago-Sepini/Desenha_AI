@@ -7,6 +7,9 @@ PENSANDO = "pensando"
 FALANDO = "falando"
 PAUSADO = "pausado"
 
+MODO_LIVRE = "livre"
+MODO_DESAFIO = "desafio"
+
 
 class State:
 
@@ -15,6 +18,13 @@ class State:
         self._estado = PARADO
         self.objeto = None
         self._listeners = []
+
+        # Estado do jogo e cronômetro
+        self.modo = MODO_LIVRE
+        self.palavra_sorteada = None
+        self.desafio_em_andamento = False
+        self.tempo_restante = 0
+        self.aguardando_posicionamento = False  # NOVO: Aguarda colocar na câmera
 
     @property
     def estado(self) -> str:
@@ -31,6 +41,17 @@ class State:
             except Exception as e:
                 print(f"[State] erro em listener: {e}")
 
+    def set_tempo_restante(self, tempo: int):
+        with self._lock:
+            self.tempo_restante = tempo
+
     def subscribe(self, fn):
-        """fn(estado) é chamada a cada mudança."""
         self._listeners.append(fn)
+
+    def reset_desenho(self):
+        with self._lock:
+            self.objeto = None
+            self.palavra_sorteada = None
+            self.desafio_em_andamento = False
+            self.tempo_restante = 0
+            self.aguardando_posicionamento = False

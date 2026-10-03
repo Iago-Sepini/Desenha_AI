@@ -148,9 +148,9 @@ Projeto desenvolvido por estudantes de Informática, divididos em três frentes:
 
 ## 🗺️ Roadmap
 
-- [ ] Módulo 1 — captura, contorno e SVG
+- [x] Módulo 1 — captura, contorno e SVG
 - [ ] Módulo 2 — CNC redesenhando o traço
-- [ ] Módulo 3 — LLM + voz
+- [x] Módulo 3 — LLM + voz
 - [ ] Módulo 4 — comandos *continuar* / *parar*
 - [ ] Módulo 5 — rosto 3D reagindo à fala
 - [ ] Integração completa dos módulos

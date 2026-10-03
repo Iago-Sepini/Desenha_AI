@@ -136,7 +136,7 @@ Projeto desenvolvido por estudantes de Informática, divididos em três frentes:
 | Nome |
 |------|
 | Davi Vinagre Dias |
-| Gustavo Porto Pereira |
+| Thales Silva Garcia | 
 | Mateus Gonçalves Tavares |
 
 ### 🎨 Design
@@ -144,7 +144,7 @@ Projeto desenvolvido por estudantes de Informática, divididos em três frentes:
 |------|
 | Higor Machado Miranda |
 | João Gabriel Prado de Souza |
-| Thales Silva Garcia |
+| Gustavo Porto Pereira|
 
 <img src="https://raw.githubusercontent.com/andreasbm/readme/master/assets/lines/aqua.png" width="100%">
 

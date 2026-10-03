@@ -1,9 +1,0 @@
-﻿Projeto visão
-
-Biblioteca necessárias:
-
-py -3.11 -m pip install --user --upgrade pip
-py -3.11 -m pip install --user numpy==1.26.4
-py -3.11 -m pip install --user tensorflow==2.15.0
-py -3.11 -m pip install --user opencv-python==4.9.0.80
-py -3.11 -m pip install --user tensorflowjs==4.17.0

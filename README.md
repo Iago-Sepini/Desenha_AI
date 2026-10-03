@@ -7,7 +7,7 @@
 ![Status](https://img.shields.io/badge/Status-Em_desenvolvimento-red)
 ![Version](https://img.shields.io/badge/Version-0.3.2--beta-purple?style=flat-square)
 ![License](https://img.shields.io/badge/licen%C3%A7a-MIT-blue)
-[![Ultimo Update](https://img.shields.io/github/last-commit/Iago-Sepini/Desenha_AI_IA?label=Ultimo%20Update&style=classic)](https://github.com/Iago-Sepini/Desenha_AI)
+[![Ultimo Update](https://img.shields.io/github/last-commit/Iago-Sepini/Desenha_AI?label=Ultimo%20Update&style=classic)](https://github.com/Iago-Sepini/Desenha_AI)
 
 </div>
 

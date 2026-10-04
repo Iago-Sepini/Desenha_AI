@@ -38,7 +38,7 @@ FRASES_DESAFIO = (
     "iniciar desafio",
     "modo desafio",
     "jogar desafio",
-    "vamos jogar",
+    "desafio",
 )
 FRASES_LIVRE = (
     "modo livre",

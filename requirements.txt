@@ -1,10 +1,14 @@
-# Python 3.10 (o TensorFlow 2.15 só funciona do 3.9 ao 3.11)
-# Conferir:  py -3.10 -m pip check
+# Python 3.10 (versão do projeto: 3.10.11)
+#   - keras 3.12 e groq exigem Python 3.10 ou mais novo;
+#   - numpy 1.26.4 só tem instalador até o Python 3.12.
+# Criar o ambiente:  py -3.10 -m venv .venv
+# Conferir:          .venv\Scripts\python -m pip check
 
-# --- Visão computacional / IA (as 4 primeiras são as do seu bibliotecas.txt) ---
+# --- Visão computacional / IA ---
 numpy==1.26.4
 opencv-python==4.9.0.80
-tensorflow==2.15.0
+tensorflow==2.20.0
+keras==3.12.4
 scikit-image==0.24.0
 scikit-learn==1.5.2
 
@@ -12,8 +16,9 @@ scikit-learn==1.5.2
 svgwrite==1.4.3
 
 # --- Voz e LLM ---
+# A voz usa o executável do Piper que já vem em voice/piper/ (piper.exe),
+# então o pacote piper-tts NÃO é instalado pelo pip.
 groq>=0.11.0
-piper-tts==1.2.0
 vosk==0.3.45
 sounddevice==0.5.1
 
@@ -26,5 +31,5 @@ pygame==2.6.1
 python-dotenv==1.0.1
 
 # --- OPCIONAL ---
-# tensorflow-decision-forests), e o detector/treino não precisam dele.
+# Só para exportar o modelo para o navegador (vision/treinar.py --web).
 # tensorflowjs==4.17.0

@@ -11,12 +11,21 @@ except Exception:
         pass
 
 import pygame
-from server.state import MODO_DESAFIO, State
+from server.state import FALANDO, MODO_DESAFIO, PARADO, PAUSADO, PENSANDO, State
 
 ASSETS_DIR = Path(__file__).resolve().parent / "assets"
 
 DURACAO_PISCADA_MS = 210
 INTERVALO_PISCADA = (3.0, 6.0)
+INTERVALO_BOCA_MS = (120, 220)  # troca da boca aberta/fechada enquanto fala
+
+# Expressão de cada estado do State. Estados sem entrada usam a neutra.
+EXPRESSAO_DO_ESTADO = {
+    PARADO: "neutro",
+    PENSANDO: "pensando",
+    FALANDO: "falando",
+    PAUSADO: "pausado",
+}
 
 
 class Face:
@@ -45,16 +54,19 @@ class Face:
         self.fonte_alerta = pygame.font.SysFont("Arial", 36, bold=True)
 
         self._originais = {
-            "abertos": pygame.image.load(ASSETS_DIR / "olhos_abertos.png").convert_alpha(),
-            "fechados": pygame.image.load(ASSETS_DIR / "olhos_fechados.png").convert_alpha(),
+            nome: pygame.image.load(ASSETS_DIR / f"rosto_{nome}.png").convert_alpha()
+            for nome in ("neutro", "piscando", "falando", "pausado", "pensando")
         }
         self._imagens = {}
+        self._posicao = (0, 0)
         self._escalar_imagens()
 
-        self._quadro_atual = "abertos"
+        self._quadro_atual = "neutro"
         self._piscando = False
         self._tempo_piscada = 0
         self._proxima_piscada = self._sortear_intervalo()
+        self._boca_aberta = True
+        self._proxima_troca_boca = 0
         self._rodando = True
 
     def parar(self):
@@ -64,7 +76,7 @@ class Face:
         while self._rodando:
             dt = self.relogio.tick(30)
             self._tratar_eventos()
-            self._atualizar_piscada(dt)
+            self._atualizar_quadro(dt)
             self._desenhar()
         pygame.quit()
 
@@ -77,32 +89,59 @@ class Face:
                     self._rodando = False
 
     def _escalar_imagens(self):
+        # As imagens são 16:9 e o display do HDMI não é: escala mantendo a
+        # proporção e centraliza. O fundo das imagens já é preto.
+        largura, altura = self.tamanho
+        img_l, img_a = next(iter(self._originais.values())).get_size()
+        escala = min(largura / img_l, altura / img_a)
+        tamanho_img = (round(img_l * escala), round(img_a * escala))
+        self._posicao = ((largura - tamanho_img[0]) // 2, (altura - tamanho_img[1]) // 2)
         self._imagens = {
-            nome: pygame.transform.smoothscale(img, self.tamanho)
+            nome: pygame.transform.smoothscale(img, tamanho_img)
             for nome, img in self._originais.items()
         }
 
     def _sortear_intervalo(self):
         return random.uniform(*INTERVALO_PISCADA) * 1000
 
+    def _atualizar_quadro(self, dt):
+        estado = self.state.estado if self.state else PARADO
+        expressao = EXPRESSAO_DO_ESTADO.get(estado, "neutro")
+
+        if expressao == "neutro":
+            self._quadro_atual = self._atualizar_piscada(dt)
+        elif expressao == "falando":
+            self._quadro_atual = self._atualizar_boca(dt)
+        else:
+            self._quadro_atual = expressao
+
+        # Fora do neutro não pisca: a imagem da piscada tem a boca do neutro.
+        if expressao != "neutro":
+            self._piscando = False
+
     def _atualizar_piscada(self, dt):
         if not self._piscando:
             self._proxima_piscada -= dt
             if self._proxima_piscada <= 0:
                 self._piscando = True
-                self._quadro_atual = "fechados"
                 self._tempo_piscada = 0
-            return
+        else:
+            self._tempo_piscada += dt
+            if self._tempo_piscada >= DURACAO_PISCADA_MS:
+                self._piscando = False
+                self._proxima_piscada = self._sortear_intervalo()
+        return "piscando" if self._piscando else "neutro"
 
-        self._tempo_piscada += dt
-        if self._tempo_piscada >= DURACAO_PISCADA_MS:
-            self._piscando = False
-            self._quadro_atual = "abertos"
-            self._proxima_piscada = self._sortear_intervalo()
+    def _atualizar_boca(self, dt):
+        self._proxima_troca_boca -= dt
+        if self._proxima_troca_boca <= 0:
+            self._boca_aberta = not self._boca_aberta
+            self._proxima_troca_boca = random.uniform(*INTERVALO_BOCA_MS)
+        return "falando" if self._boca_aberta else "neutro"
 
     def _desenhar(self):
         self.tela.fill((0, 0, 0))
-        self.tela.blit(self._imagens[self._quadro_atual], (0, 0))
+        self.tela.blit(self._imagens[self._quadro_atual], self._posicao)
 
         self._desenhar_overlay_desafio()
 

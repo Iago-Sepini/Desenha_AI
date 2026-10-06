@@ -83,19 +83,25 @@ desenha-ai/
 
 ## 🚀 Como executar
 
+> **Python 3.10** (o projeto usa o 3.10.11). Funciona do 3.10 ao 3.12; fora disso o TensorFlow, o Keras ou o numpy não instalam.
+>
+> A voz usa o `piper.exe` que já vem em `voice/piper/`. Não é preciso instalar o pacote `piper-tts`.
+
 ```bash
 # 1. Clone o repositório
-git clone https://github.com/Iago-Sepini/desenha-ai.git
-cd desenha-ai
+git clone https://github.com/Iago-Sepini/Desenha_AI.git
+cd Desenha_AI
 
-# 2. Instale as dependências
+# 2. Crie o ambiente com Python 3.10 e instale as dependências
+py -3.10 -m venv .venv
+.venv\Scripts\activate
 pip install -r requirements.txt
 
 # 3. Configure as variáveis de ambiente
 cp .env.example .env
 # edite o .env e adicione sua chave da Groq
 
-# 4. Execute
+# 4. Execute (sempre da raiz do projeto)
 python main.py
 ```
 

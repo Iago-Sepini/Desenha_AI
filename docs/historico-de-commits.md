@@ -16,8 +16,8 @@ atual ou numa fase nova.
 
 | Autor no git | Frente | Principais contribuições |
 |--------------|--------|--------------------------|
-| **Iago** (aparece como `Iago Nunes`, `Iago Sepini` e `Iago-Sepini`; é a mesma pessoa, com o mesmo e-mail) | Software, líder | Estrutura inicial, README, voz com Piper, IA com a Groq, push-to-talk com Vosk, rosto em pygame, persona do Max |
-| **Japola** | Software, IA e voz | Branch `feat/llm-voz`: correções no fluxo da CNC, no histórico da LLM e no cache, seleção de microfone, troca da voz para "faber" |
+| **Iago** (aparece como `Iago Nunes`, `Iago Sepini` e `Iago-Sepini`; é a mesma pessoa, com o mesmo e-mail) | Software, líder | Estrutura inicial, README, voz com Piper, IA com a Groq, push-to-talk com Vosk, rosto em pygame, persona do Max, visão com 100+ classes do QuickDraw, listener com Whisper, integração da visão com a LLM, modos Livre e Desafio |
+| **Japola** | Software, IA e voz | Branch `feat/llm-voz`: correções no fluxo da CNC, no histórico da LLM e no cache, seleção de microfone, troca da voz para "faber", imagens novas do rosto, `requirements.txt` com TensorFlow 2.20 e sem o `piper-tts` |
 | **Marcos Dias Sepini** | Software, visão | Merge do PR #1 e módulo de visão (reconhecimento de desenhos pela câmera) |
 | **Vinicius Ozawa** | Revisão | Merge dos PRs #2, #3 e #4 na `main` |
 
@@ -55,6 +55,22 @@ atual ou numa fase nova.
 | 30/09 | `c95551f` | Vinicius Ozawa | Merge do PR #3 na `main` |
 | 01/10 | `e45fc62` | Japola | feat: voz do Piper trocada de "jeff" para "faber" |
 | 01/10 | `9c84e37` | Vinicius Ozawa | Merge do PR #4 na `main` |
+| 01/10 | `1764e51` | Japola | docs: troca da voz neste histórico |
+| 01/10 | `5aadeb9` | Japola | Merge da `docs/historico-voz-faber` na `main` |
+| 01/10 | `fe46ad8` | Japola | feat: imagens novas do rosto |
+| 02/10 | `eafb490` | Iago | Visão num programa só (`vision/main.py`) |
+| 02/10 | `3dcadae` | Iago | Primeiro `model.h5` e `classes.json`, Keras direto |
+| 02/10 | `7a5a9c0` | Iago | `.gitignore`: `.npy` vira `*.npy` |
+| 02/10 | `d20f1f2` | Iago | Visão com 100 classes e tela cheia |
+| 02/10 | `58004c2` | Iago | Listener com Groq Whisper |
+| 02/10 | `4b54f30` | Iago | Lista de classes do QuickDraw em português |
+| 03/10 | `88eac6c` | Iago | Modelos do hardware no README |
+| 03/10 | `8722ab4` | Iago | Rosto abre direto no segundo monitor |
+| 03/10 | `631d058` | Iago | Visão integrada à LLM, modos Livre e Desafio |
+| 03/10 | `d1de809` | Iago | Roadmap: Módulos 1 e 3 concluídos |
+| 03/10 | `d72c029` | Iago | Corrige o selo de último update do README |
+| 04/10 | `e552817` | Iago | Frase "desafio" inicia o modo Desafio |
+| 06/10 | `334c64b` | Japola | fix: TensorFlow 2.20, Keras 3.12 e sem `piper-tts` |
 
 ### Como as branches se juntaram
 
@@ -130,7 +146,8 @@ Implementa a fala do assistente:
 - `voice/text_utils.py`: remove links, markdown e emojis antes da fala e divide
   o texto em frases de tamanho bom para a entonação.
 - `voice/demo_tts.py`: teste da voz com pausa e retomada.
-- Binários do Piper para Windows (`voice/piper/`) e a voz em português
+- Binários do Piper para Windows (`voice/piper/`, por isso o pacote
+  `piper-tts` do pip nunca foi necessário; ver `334c64b`) e a voz em português
   `voice/models/br.onnx`, de cerca de 63 MB (dataset "jeff", trocado pelo
   "faber" em `e45fc62`).
 - `config.py` com os caminhos do Piper.
@@ -638,6 +655,289 @@ Cada troca de voz soma mais cerca de 60 MB ao histórico do repositório, e o
 `git clone` fica mais lento para todo mundo. Se a voz for trocada de novo,
 vale passar os `.onnx` para o Git LFS antes.
 
+### `1764e51` · docs: registra a troca da voz para faber no histórico de commits
+
+**Japola** · 01/10/2026
+
+Registra o `e45fc62` neste arquivo. Entrou na `main` pelo merge `5aadeb9`, da
+branch `docs/historico-voz-faber`.
+
+### `fe46ad8` · feat: imagem do visor atualizado
+
+**Japola** · 01/10/2026 · `face/assets/`, `docs/`
+
+- `olhos_abertos.png` e `olhos_fechados.png` trocados pelos desenhos novos dos
+  olhos do Max.
+- Entra o `pensando.png`, para o rosto mostrar quando a IA estiver pensando. Ainda
+  não é usado no código.
+- Sai o `cncAtiva.png`, que nunca foi usado, e saem as cópias das imagens que
+  estavam em `docs/`.
+
+---
+
+## Fase 10: visão com o QuickDraw
+
+Commits enviados direto na `main`, sem PR.
+
+### `eafb490` · mudança nos arquivos da visão
+
+**Iago** · 02/10/2026 · `vision/main.py`, `vision/camera.py`, `face/face.py`
+
+- `vision/main.py` (novo): junta o treino (`train.py`) e a câmera
+  (`camera.py`) num programa só. Treina se ainda não existir `model.h5` e depois
+  abre a câmera. Opções `--treinar`, `--camera`, `--sem-camera`, `--web` e
+  `--cam <n>`. Teclas novas na câmera: `d` (debug), `c` (contornos) e `s` (salva
+  um print).
+- `vision/camera.py`: desenha os contornos na tela, mostra o FPS e uma janela
+  de debug, e escreve o resultado no terminal só quando ele muda e fica estável.
+- `face/face.py`: a piscada passa de 150 para 210 ms.
+
+### `3dcadae` · feat: teste visão
+
+**Iago** · 02/10/2026
+
+- Primeiro `model.h5` (cerca de 700 KB) e `classes.json` no repositório, com as
+  9 classes do `84ab4c4`. Resolve a pendência de ter que treinar antes de testar.
+- `vision/main.py` e `vision/train.py` passam a importar o `keras` direto, em vez
+  de `tensorflow.keras`.
+- `.gitignore` ganha `.npy`, para não subir os desenhos baixados do QuickDraw.
+
+### `7a5a9c0` · Update .gitignore
+
+**Iago** · 02/10/2026
+
+Corrige o `.npy` do commit anterior para `*.npy`. Sem o `*`, o Git só ignorava
+um arquivo chamado exatamente `.npy`, e os desenhos baixados apareciam como
+arquivos novos.
+
+### `d20f1f2` · update Model
+
+**Iago** · 02/10/2026 · `vision/main.py`, `model.h5`, `requirements.txt`
+
+- `vision/main.py` passa a treinar até 100 classes do QuickDraw e abre a câmera
+  em tela cheia. `+` e `-` passam a mudar a sensibilidade da detecção de tinta,
+  em vez do tamanho do quadrado.
+- `model.h5` retreinado (mesmo tamanho do anterior).
+- `requirements.txt` ganha `tensorflow`, `tensorflowjs` e `scikit-learn`, ainda
+  sem versão fixa.
+
+### `58004c2` · feat: import Whisper
+
+**Iago** · 02/10/2026
+
+- `voice/listener_Whisper.py` (novo): o mesmo push-to-talk do
+  `voice/listener.py`, mas transcreve com o modelo `whisper-large-v3-turbo` da
+  Groq em vez do Vosk. A seleção de microfone e o teste de 16 kHz do `f373537`
+  foram mantidos. Precisa da `GROQ_API_KEY` e de internet.
+- Apaga o `voice/demo_tts.py` (teste da voz do `1b44888`).
+- Apaga o `vision/bibliotecas.txt`. As versões que ele pedia (`numpy 1.26.4`,
+  `tensorflow 2.15.0`, `opencv-python 4.9.0.80`) foram depois para o
+  `requirements.txt` no `631d058`.
+- README: Thales Silva Garcia vai para o Hardware e Gustavo Porto Pereira para
+  o Design.
+
+O `main.py` continua usando o `voice/listener.py` (Vosk). O Whisper fica como
+alternativa, ainda sem forma de escolher entre os dois.
+
+### `4b54f30` · o
+
+**Iago** · 02/10/2026 · `vision/classes_quickdraw.py`, `vision/main.py`
+
+- `vision/classes_quickdraw.py` (novo): as 342 categorias do QuickDraw com o
+  nome em português (`"apple": "maçã"`), mais as listas menores usadas no
+  treino.
+- `vision/main.py` passa a ler as classes desse arquivo.
+- Apaga o `classes.json` do `3dcadae` (volta no `631d058`).
+
+### `88eac6c` · Specify models in requirements section of README
+
+**Iago** · 03/10/2026 · `README.md`
+
+Preenche a tabela de hardware do README: câmera USB C72, caixa de som
+Bluetooth, display HDMI de 5 polegadas, Arduino Nano, CNC Shield, 3 motores de
+passo de 12 V e fonte de 12 V. Saem as linhas "Computador" e "Caneta e
+suporte".
+
+### `8722ab4` · Update face.py
+
+**Iago** · 03/10/2026 · `face/face.py`
+
+- O rosto abre **direto no segundo monitor** (`display_index=1`), sem borda e
+  no tamanho da tela. Se só houver um monitor, usa o principal.
+- Desliga a escala de DPI do Windows, que deixava a imagem borrada e fora do
+  lugar.
+- Saem o F11 e o redimensionamento da janela; ESC fecha.
+- Dá para testar o rosto sozinho com `python face/face.py`.
+
+---
+
+## Fase 11: visão integrada e modos de jogo
+
+### `631d058` · feat(core): integra modelo QuickDraw e conecta com a LLM
+
+**Iago** · 03/10/2026
+
+O maior commit até aqui (23 arquivos). A visão deixa de ser um programa
+separado e passa a rodar dentro do `main.py`.
+
+**Visão** (`vision/`):
+
+- `treinar.py` substitui o `train.py`. Escolhe o tamanho do treino com
+  `--classes basico` (9), `medio` (cerca de 71) ou todas (342), ou
+  `--escolher "cat,dog"`. Gera `model.h5` e `classes.json` juntos.
+- `detector.py` substitui o `camera.py`: classe `Detector`, que recebe o recorte
+  da câmera e devolve nome, confiança, as 5 melhores apostas e os contornos.
+- `config_camera.py`: abre a câmera com as opções do `camera_config.json`
+  (índice, resolução, espelhar, tamanho do quadrado). `--listar` mostra as
+  câmeras e `--testar` abre um preview para ajustar e salvar.
+- `watcher.py`: classe `DrawingWatcher`, que roda a câmera e o detector em
+  segundo plano e mostra uma janela com o que está sendo reconhecido. **Não**
+  avisa o Max sozinho: só manda o desenho quando alguém chama `confirmar()`.
+- `svg_export.py`: salva os contornos do desenho em `desenho.svg`, para a CNC.
+- Apaga o `vision/main.py`.
+- `model.h5` retreinado (cerca de 8,9 MB) e `classes.json` de volta, com as 9
+  classes básicas.
+
+**Modos de jogo** (`ui/manager.py`, `server/state.py`, `ai/prompts.py`):
+
+- **Modo Livre**: o visitante desenha no tempo dele. Quando ele diz que
+  terminou, a IA escreve `[[CONFIRMAR_DESENHO]]` e o `main.py` pede o desenho ao
+  `DrawingWatcher`. O Max comenta o desenho e oferece a CNC.
+- **Modo Desafio**: é sorteada uma palavra de `PALAVRAS_DESAFIO` e o visitante
+  tem 30 segundos para desenhar, com cronômetro na tela e bipe no fim. Depois
+  ele diz "pronto" e o Max diz se acertou. A CNC não é oferecida.
+- Marcadores novos: `[[CONFIRMAR_DESENHO]]`, `[[DESAFIO_SIM]]` e
+  `[[DESAFIO_NAO]]`. Avisos novos: início do desafio e resultado do desafio.
+- `State` ganha `modo`, `palavra_sorteada`, `desafio_em_andamento`,
+  `tempo_restante` e `aguardando_posicionamento`.
+- Comandos novos no console: `/modo livre` e `/desafio`. Por voz: "modo
+  desafio", "modo livre", "pronto" etc.
+
+**Interface** (`ui/`):
+
+- `face/` vira `ui/`. O `ui/face.py` recebe o `State` e desenha por cima dos
+  olhos o cronômetro e a palavra do desafio.
+- `ui/dialogs.py`: antes de ligar a CNC aparece uma janela de **confirmação do
+  operador**. Se ele cancelar, o Max avisa o visitante.
+
+**Outros:**
+
+- `requirements.txt` com versões fixas e Python 3.10. Trazia
+  `tensorflow==2.15.0` e `piper-tts==1.2.0` (os dois mudam no `334c64b`).
+- O prompt foi encurtado: saíram as dicas de como desenhar e várias regras de
+  cuidado ficaram mais curtas.
+- Cache com respostas novas para `gato`, `cachorro`, `sol` e `carro`, e a de
+  `casa` reescrita.
+- `.gitignore` ganha `*desenho.svg`.
+
+#### Atenção
+
+- O `responder()` do `main.py` agora procura os marcadores no texto **e** no
+  `comando`. Ao criar um marcador novo, ele tem que entrar nas duas listas (a
+  que detecta e a que limpa), senão o Max lê o marcador em voz alta.
+- O `ui/manager.py` usa `winsound`, que só existe no Windows.
+- O `watcher.py` procura `model.h5` e `classes.json` na pasta de onde o
+  programa é rodado. Rode sempre da raiz do projeto.
+
+### `d1de809` · Update roadmap with completed modules
+
+**Iago** · 03/10/2026
+
+Marca no roadmap do README os Módulos 1 (visão) e 3 (LLM e voz) como
+concluídos.
+
+### `d72c029` · Update README.md
+
+**Iago** · 03/10/2026
+
+O selo "Último update" do README apontava para o repositório
+`Desenha_AI_IA`, que não existe. Passa a apontar para `Desenha_AI`.
+
+### `e552817` · Update main.py
+
+**Iago** · 04/10/2026 · `main.py`
+
+Em `FRASES_DESAFIO`, "vamos jogar" vira "desafio". Assim, qualquer fala com a
+palavra "desafio" inicia o Modo Desafio.
+
+#### Efeito colateral (ainda em aberto)
+
+O `comando_voz()` testa `FRASES_DESAFIO` **antes** de `FRASES_LIVRE`. Como
+"cancelar desafio" contém "desafio", dizer isso **começa um desafio novo** em
+vez de voltar ao Modo Livre. O mesmo vale para "não quero outro desafio": a fala
+nem chega à LLM. Correção sugerida: testar `FRASES_LIVRE` primeiro.
+
+---
+
+## Fase 12: dependências
+
+### `334c64b` · fix: requirements com TensorFlow 2.20, Keras 3.12 e sem o piper-tts
+
+**Japola** · 06/10/2026 · `requirements.txt`
+
+#### Sintoma
+
+O `requirements.txt` não montava o ambiente que o projeto usa de verdade no
+Windows: o `.venv` que roda o projeto tinha outro TensorFlow e não tinha o
+`piper-tts`.
+
+#### Causa
+
+Duas linhas do `631d058`:
+
+1. **`piper-tts==1.2.0`**: depende do `piper-phonemize`, que não tem instalador
+   para Windows, e por isso o `pip` falha. E o pacote nem é usado: desde o
+   `1b44888` a voz chama o **executável** `voice/piper/piper.exe`, que já vem no
+   repositório com as DLLs e o `espeak-ng-data` (ver `voice/tts.py` e
+   `config.PIPER_EXE`).
+2. **`tensorflow==2.15.0`**: traz o Keras 2, mas o código importa o `keras`
+   direto (desde o `3dcadae`), e o `model.h5` foi salvo com o Keras 3.12.4
+   (está gravado no próprio arquivo).
+
+#### Correção
+
+- `piper-tts` removido. **A voz continua sendo o Piper**: só o pacote do pip
+  saiu, o `piper.exe` e o modelo `voice/models/br.onnx` continuam iguais.
+- `tensorflow==2.20.0` e `keras==3.12.4`, na seção da visão (estavam na seção
+  "Voz e LLM").
+- O cabeçalho passa a dizer a versão do Python do projeto e por quê.
+- O comentário quebrado da seção OPCIONAL foi reescrito: o `tensorflowjs` só
+  serve para o `vision/treinar.py --web`.
+
+#### Versão do Python
+
+O projeto usa **Python 3.10** (o `.venv` foi criado com o **3.10.11**).
+
+| Pacote | Python aceito |
+|--------|---------------|
+| `keras 3.12.4` e `groq` | 3.10 ou mais novo |
+| `tensorflow 2.20.0` | 3.9 a 3.13 |
+| `numpy 1.26.4` | até 3.12 |
+
+Ou seja, funciona do 3.10 ao 3.12. O 3.10 é o padrão para todo mundo ter o
+mesmo ambiente. Para montar:
+
+```bash
+py -3.10 -m venv .venv
+.venv\Scripts\python -m pip install -r requirements.txt
+.venv\Scripts\python -m pip check
+```
+
+Conferido no `.venv`: TensorFlow 2.20.0, Keras 3.12.4 e numpy 1.26.4 instalados,
+`pip check` sem erros e o `model.h5` abre com saída de 9 classes, igual ao
+`classes.json`.
+
+O commit seguinte, só de documentação, registra tudo isto neste arquivo e põe a
+versão do Python e o passo do `.venv` no "Como executar" do README. A URL do
+`git clone` no README também foi corrigida (era `desenha-ai`, o repositório se
+chama `Desenha_AI`).
+
+#### Atenção
+
+Não volte a pôr o `piper-tts` no `requirements.txt` achando que falta a voz. Se
+a voz não sair, confira se `voice/piper/piper.exe` e `voice/models/br.onnx`
+existem.
+
 ---
 
 ## Pendências conhecidas
@@ -646,10 +946,18 @@ Problemas rastreados até um commit e ainda não corrigidos:
 
 | Problema | Onde | Origem |
 |----------|------|--------|
-| README com pastas que não existem e URL errada | `README.md` | `a9086e3` |
-| `requirements.txt` com pacotes sem uso e sem o `tensorflow` da visão | `requirements.txt` | `1008066`, `84ab4c4` |
+| README com pastas que não existem (`hardware/`, `face3d/`) e sem `ui/` | `README.md` | `a9086e3`, `631d058` |
 | Normalização pelo pico, primeira sílaba cortada, barra de espaço global | `voice/listener.py` | ver `f373537` |
 | `speaker.wait()` sem timeout | `main.py`, `voice/speaker.py` | ver `455d41a` |
-| Rosto não reage à fala | `face/face.py` | `6b82a33` |
-| Modelo da visão fora do repositório e visão fora do `main.py` | `vision/` | `84ab4c4` |
+| Rosto não reage à fala (só mostra o cronômetro do desafio) e `pensando.png` sem uso | `ui/face.py` | `6b82a33`, `fe46ad8` |
 | Modelo de voz com mais de 50 MB fora do Git LFS | `voice/models/` | `1b44888`, `e45fc62` |
+| "cancelar desafio" inicia um desafio novo | `main.py` | ver `e552817` |
+| 4 das 9 palavras do desafio (`árvore`, `estrela`, `coração`, `flor`) não estão no `classes.json`: a visão nunca as reconhece e o visitante sempre "erra" | `ui/manager.py` | `631d058` |
+| `listener_Whisper.py` sem uso: o `main.py` só usa o Vosk | `voice/` | `58004c2` |
+
+Resolvidas desde a última versão desta tabela:
+
+| Problema | Resolvido em |
+|----------|--------------|
+| `requirements.txt` com pacotes sem uso e sem o `tensorflow` da visão | `d20f1f2`, `631d058` e `334c64b` |
+| Modelo da visão fora do repositório e visão fora do `main.py` | `3dcadae` e `631d058` |

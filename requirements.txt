@@ -21,6 +21,7 @@ svgwrite==1.4.3
 groq>=0.11.0
 vosk==0.3.45
 sounddevice==0.5.1
+pycawcomtypes== 1.4.17
 
 # --- Controle (teclado/mouse, Arduino, áudio/jogo) ---
 pynput==1.7.7

@@ -17,7 +17,7 @@ Como módulo (no seu código principal):
         # r.nome       -> "gato" (ou None se não reconheceu)
         # r.confianca  -> 0.87
         # r.top        -> [("gato", 0.87), ("tigre", 0.06), ...]
-        # r.contornos  -> contornos do OpenCV (para debug/desenho)
+        # r.contornos  -> contornos dos traços pretos (use no gerar_svg)
         # r.estavel    -> último nome confirmado (não pisca)
 
 Como programa (demo com câmera, contornos, debug e texto no terminal):
@@ -42,9 +42,15 @@ import numpy as np
 # ------------------------------------------------------------------ ajustes
 MIN_CONFIDENCE = 0.55    # abaixo disso o resultado é "não reconheci"
 MIN_INK_PIXELS = 60      # mínimo de tinta para considerar que há desenho
-MIN_CONTOUR_AREA = 40    # ignora contornos menores que isso (ruído)
+MIN_CONTOUR_AREA = 40    # ignora manchas de tinta menores que isso (ruído)
 SMOOTH_FRAMES = 6        # média das últimas N previsões
 STABLE_FRAMES = 8        # frames iguais seguidos para "confirmar" um resultado
+
+# --- detecção dos traços pretos
+LIMIAR_TINTA = 170       # 0-255: pixel mais escuro que isso (vs. papel) é tinta. Menor = mais exigente
+SO_PRETO = True          # ignora tinta colorida (caneta azul/vermelha)
+SATURACAO_MAX = 120      # acima disso o traço é considerado colorido
+MARGEM_BORDA = 0.02      # fração do recorte descartada nas bordas (sombras, moldura)
 
 
 def sem_acento(texto):
@@ -52,16 +58,50 @@ def sem_acento(texto):
     return unicodedata.normalize("NFKD", texto).encode("ascii", "ignore").decode()
 
 
+# ------------------------------------------------------------------ traços pretos
+def extrair_tinta(roi):
+    """Imagem do papel -> máscara (255 = traço preto, 0 = papel), mesmo tamanho do recorte."""
+    gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
+    h, w = gray.shape
+
+    # Estima o fundo (papel): o fechamento remove os traços escuros finos e
+    # o blur suaviza. Dividir pelo fundo elimina sombra e luz irregular.
+    k = max(15, (min(h, w) // 8) | 1)
+    fundo = cv2.morphologyEx(gray, cv2.MORPH_CLOSE,
+                             cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k, k)))
+    fundo = cv2.GaussianBlur(fundo, (0, 0), k / 3)
+    norm = cv2.divide(gray, np.maximum(fundo, 1), scale=255)
+    norm = cv2.GaussianBlur(norm, (3, 3), 0)
+    tinta = ((norm < LIMIAR_TINTA).astype(np.uint8)) * 255
+
+    # só traço preto: descarta o que tem cor
+    if SO_PRETO:
+        sat = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)[:, :, 1]
+        tinta[sat > SATURACAO_MAX] = 0
+
+    # descarta as bordas do recorte
+    m = int(min(h, w) * MARGEM_BORDA)
+    if m > 0:
+        tinta[:m, :] = 0
+        tinta[-m:, :] = 0
+        tinta[:, :m] = 0
+        tinta[:, -m:] = 0
+
+    # fecha furinhos no traço e remove pontos soltos (ruído)
+    tinta = cv2.morphologyEx(tinta, cv2.MORPH_CLOSE, np.ones((3, 3), np.uint8))
+    n, rotulos, stats, _ = cv2.connectedComponentsWithStats(tinta, connectivity=8)
+    limpa = np.zeros_like(tinta)
+    for i in range(1, n):
+        if stats[i, cv2.CC_STAT_AREA] >= MIN_CONTOUR_AREA:
+            limpa[rotulos == i] = 255
+    return limpa
+
+
 # ------------------------------------------------------------------ pré-processamento
 def preprocessar(roi):
     """Imagem do papel -> (bitmap 28x28 ou None, máscara de tinta, contornos).
     Traços brancos em fundo preto, como no QuickDraw. Não precisa de TensorFlow."""
-    gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
-    gray = cv2.GaussianBlur(gray, (5, 5), 0)
-    # tinta escura em papel claro -> tinta branca (aguenta luz irregular)
-    tinta = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
-                                  cv2.THRESH_BINARY_INV, 31, 12)
-    tinta = cv2.morphologyEx(tinta, cv2.MORPH_OPEN, np.ones((3, 3), np.uint8))
+    tinta = extrair_tinta(roi)
 
     contornos, _ = cv2.findContours(tinta, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     contornos = [c for c in contornos if cv2.contourArea(c) >= MIN_CONTOUR_AREA]

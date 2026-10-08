@@ -13,11 +13,26 @@ except Exception:
 import pygame
 from server.state import FALANDO, MODO_DESAFIO, PARADO, PAUSADO, PENSANDO, State
 
+try:
+    from comtypes import CLSCTX_ALL, CoCreateInstance
+    from pycaw.constants import CLSID_MMDeviceEnumerator
+    from pycaw.pycaw import IAudioMeterInformation, IMMDeviceEnumerator
+    PYCAW_OK = True
+except Exception:
+    PYCAW_OK = False
+
 ASSETS_DIR = Path(__file__).resolve().parent / "assets"
 
-DURACAO_PISCADA_MS = 210
+DURACAO_PISCADA_MS = 180
 INTERVALO_PISCADA = (3.0, 6.0)
 INTERVALO_BOCA_MS = (120, 220)  # troca da boca aberta/fechada enquanto fala
+
+# Detecção de som saindo do PC
+LIMIAR_SOM = 0.01        # pico (0.0 a 1.0) acima do qual considera que há som
+TOLERANCIA_SILENCIO_MS = 350  # mantém a boca mexendo nas pausas curtas da fala
+
+# Texto do modo desafio (com contagem rolando) fica 20% menor
+ESCALA_TEXTO_DESAFIO = 0.8
 
 # Expressão de cada estado do State. Estados sem entrada usam a neutra.
 EXPRESSAO_DO_ESTADO = {
@@ -26,6 +41,37 @@ EXPRESSAO_DO_ESTADO = {
     FALANDO: "falando",
     PAUSADO: "pausado",
 }
+
+
+class MedidorDeSom:
+    """Lê o pico de áudio do dispositivo de saída padrão do Windows."""
+
+    def __init__(self):
+        self._medidor = None
+        if not PYCAW_OK:
+            return
+        try:
+            enumerador = CoCreateInstance(
+                CLSID_MMDeviceEnumerator, IMMDeviceEnumerator, CLSCTX_ALL
+            )
+            dispositivo = enumerador.GetDefaultAudioEndpoint(0, 1)  # render, multimedia
+            interface = dispositivo.Activate(
+                IAudioMeterInformation._iid_, CLSCTX_ALL, None
+            )
+            self._medidor = interface.QueryInterface(IAudioMeterInformation)
+        except Exception as e:
+            print(f"[Face] Não foi possível iniciar o medidor de som: {e}")
+            self._medidor = None
+
+    @property
+    def disponivel(self):
+        return self._medidor is not None
+
+    def pico(self):
+        try:
+            return self._medidor.GetPeakValue()
+        except Exception:
+            return 0.0
 
 
 class Face:
@@ -49,8 +95,9 @@ class Face:
 
         self.relogio = pygame.time.Clock()
 
-        self.fonte_timer = pygame.font.SysFont("Arial", 56, bold=True)
-        self.fonte_desafio = pygame.font.SysFont("Arial", 32, bold=True)
+        e = ESCALA_TEXTO_DESAFIO
+        self.fonte_timer = pygame.font.SysFont("Arial", round(56 * e), bold=True)
+        self.fonte_desafio = pygame.font.SysFont("Arial", round(32 * e), bold=True)
         self.fonte_alerta = pygame.font.SysFont("Arial", 36, bold=True)
 
         self._originais = {
@@ -68,6 +115,9 @@ class Face:
         self._boca_aberta = True
         self._proxima_troca_boca = 0
         self._rodando = True
+
+        self._medidor = MedidorDeSom()
+        self._silencio_ms = TOLERANCIA_SILENCIO_MS  # começa em silêncio
 
     def parar(self):
         self._rodando = False
@@ -104,6 +154,16 @@ class Face:
     def _sortear_intervalo(self):
         return random.uniform(*INTERVALO_PISCADA) * 1000
 
+    def _som_tocando(self, dt):
+        # Sem o pycaw, cai no comportamento antigo (só segue o estado).
+        if not self._medidor.disponivel:
+            return True
+        if self._medidor.pico() > LIMIAR_SOM:
+            self._silencio_ms = 0
+        else:
+            self._silencio_ms += dt
+        return self._silencio_ms < TOLERANCIA_SILENCIO_MS
+
     def _atualizar_quadro(self, dt):
         estado = self.state.estado if self.state else PARADO
         expressao = EXPRESSAO_DO_ESTADO.get(estado, "neutro")
@@ -111,7 +171,13 @@ class Face:
         if expressao == "neutro":
             self._quadro_atual = self._atualizar_piscada(dt)
         elif expressao == "falando":
-            self._quadro_atual = self._atualizar_boca(dt)
+            if self._som_tocando(dt):
+                self._quadro_atual = self._atualizar_boca(dt)
+            else:
+                # Estado "falando" mas ainda sem som: rosto parado, boca fechada.
+                self._boca_aberta = True
+                self._proxima_troca_boca = 0
+                self._quadro_atual = "neutro"
         else:
             self._quadro_atual = expressao
 
@@ -153,28 +219,33 @@ class Face:
 
         largura_tela, _ = self.tamanho
 
-        # 1. MODO DESAFIO COM O TEMPO ROLANDO
+        # 1. MODO DESAFIO COM O TEMPO ROLANDO (texto e faixa 20% menores)
         if self.state.modo == MODO_DESAFIO and self.state.desafio_em_andamento:
             tempo = self.state.tempo_restante
             palavra = self.state.palavra_sorteada or ""
 
-            overlay_surface = pygame.Surface((largura_tela, 140), pygame.SRCALPHA)
+            e = ESCALA_TEXTO_DESAFIO
+            altura_faixa = round(140 * e)
+
+            overlay_surface = pygame.Surface((largura_tela, altura_faixa), pygame.SRCALPHA)
             overlay_surface.fill((10, 20, 45, 210))
             self.tela.blit(overlay_surface, (0, 0))
 
             cor_tempo = (255, 60, 60) if tempo <= 5 else (0, 220, 255)
-            pygame.draw.line(self.tela, cor_tempo, (0, 140), (largura_tela, 140), width=4)
+            pygame.draw.line(
+                self.tela, cor_tempo, (0, altura_faixa), (largura_tela, altura_faixa), width=4
+            )
 
             # Cronômetro Ex: 00:25
             txt_tempo = self.fonte_timer.render(f"00:{tempo:02d}", True, cor_tempo)
-            rect_tempo = txt_tempo.get_rect(center=(largura_tela // 2, 45))
+            rect_tempo = txt_tempo.get_rect(center=(largura_tela // 2, round(45 * e)))
             self.tela.blit(txt_tempo, rect_tempo)
 
             # Instrução Ex: DESENHE: CASA
             txt_palavra = self.fonte_desafio.render(
                 f"DESENHE UM(A): {palavra.upper()}", True, (255, 255, 255)
             )
-            rect_palavra = txt_palavra.get_rect(center=(largura_tela // 2, 105))
+            rect_palavra = txt_palavra.get_rect(center=(largura_tela // 2, round(105 * e)))
             self.tela.blit(txt_palavra, rect_palavra)
 
         # 2. TEMPO ACABOU: AVISO PARA COLOCAR O PAPEL NA CÂMERA

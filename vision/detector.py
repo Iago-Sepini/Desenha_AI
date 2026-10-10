@@ -17,7 +17,7 @@ Como módulo (no seu código principal):
         # r.nome       -> "gato" (ou None se não reconheceu)
         # r.confianca  -> 0.87
         # r.top        -> [("gato", 0.87), ("tigre", 0.06), ...]
-        # r.contornos  -> contornos dos traços pretos (use no gerar_svg)
+        # r.contornos  -> contornos do OpenCV (para debug/desenho)
         # r.estavel    -> último nome confirmado (não pisca)
 
 Como programa (demo com câmera, contornos, debug e texto no terminal):
@@ -42,15 +42,11 @@ import numpy as np
 # ------------------------------------------------------------------ ajustes
 MIN_CONFIDENCE = 0.55    # abaixo disso o resultado é "não reconheci"
 MIN_INK_PIXELS = 60      # mínimo de tinta para considerar que há desenho
-MIN_CONTOUR_AREA = 40    # ignora manchas de tinta menores que isso (ruído)
-SMOOTH_FRAMES = 6        # média das últimas N previsões
+MIN_CONTOUR_AREA = 40    # ignora contornos menores que isso (ruído)
+SMOOTH_FRAMES = 4        # média das últimas N previsões da IA
 STABLE_FRAMES = 8        # frames iguais seguidos para "confirmar" um resultado
-
-# --- detecção dos traços pretos
-LIMIAR_TINTA = 170       # 0-255: pixel mais escuro que isso (vs. papel) é tinta. Menor = mais exigente
-SO_PRETO = True          # ignora tinta colorida (caneta azul/vermelha)
-SATURACAO_MAX = 120      # acima disso o traço é considerado colorido
-MARGEM_BORDA = 0.02      # fração do recorte descartada nas bordas (sombras, moldura)
+MAX_FPS_IA = 8           # quantas vezes POR SEGUNDO a IA roda (a câmera segue a 30 FPS). 0 = todo frame
+MAX_THREADS = 2          # núcleos que o TensorFlow pode usar (deixa o resto para Vosk/Piper). 0 = sem limite
 
 
 def sem_acento(texto):
@@ -58,50 +54,16 @@ def sem_acento(texto):
     return unicodedata.normalize("NFKD", texto).encode("ascii", "ignore").decode()
 
 
-# ------------------------------------------------------------------ traços pretos
-def extrair_tinta(roi):
-    """Imagem do papel -> máscara (255 = traço preto, 0 = papel), mesmo tamanho do recorte."""
-    gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
-    h, w = gray.shape
-
-    # Estima o fundo (papel): o fechamento remove os traços escuros finos e
-    # o blur suaviza. Dividir pelo fundo elimina sombra e luz irregular.
-    k = max(15, (min(h, w) // 8) | 1)
-    fundo = cv2.morphologyEx(gray, cv2.MORPH_CLOSE,
-                             cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k, k)))
-    fundo = cv2.GaussianBlur(fundo, (0, 0), k / 3)
-    norm = cv2.divide(gray, np.maximum(fundo, 1), scale=255)
-    norm = cv2.GaussianBlur(norm, (3, 3), 0)
-    tinta = ((norm < LIMIAR_TINTA).astype(np.uint8)) * 255
-
-    # só traço preto: descarta o que tem cor
-    if SO_PRETO:
-        sat = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)[:, :, 1]
-        tinta[sat > SATURACAO_MAX] = 0
-
-    # descarta as bordas do recorte
-    m = int(min(h, w) * MARGEM_BORDA)
-    if m > 0:
-        tinta[:m, :] = 0
-        tinta[-m:, :] = 0
-        tinta[:, :m] = 0
-        tinta[:, -m:] = 0
-
-    # fecha furinhos no traço e remove pontos soltos (ruído)
-    tinta = cv2.morphologyEx(tinta, cv2.MORPH_CLOSE, np.ones((3, 3), np.uint8))
-    n, rotulos, stats, _ = cv2.connectedComponentsWithStats(tinta, connectivity=8)
-    limpa = np.zeros_like(tinta)
-    for i in range(1, n):
-        if stats[i, cv2.CC_STAT_AREA] >= MIN_CONTOUR_AREA:
-            limpa[rotulos == i] = 255
-    return limpa
-
-
 # ------------------------------------------------------------------ pré-processamento
 def preprocessar(roi):
     """Imagem do papel -> (bitmap 28x28 ou None, máscara de tinta, contornos).
     Traços brancos em fundo preto, como no QuickDraw. Não precisa de TensorFlow."""
-    tinta = extrair_tinta(roi)
+    gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
+    gray = cv2.GaussianBlur(gray, (5, 5), 0)
+    # tinta escura em papel claro -> tinta branca (aguenta luz irregular)
+    tinta = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+                                  cv2.THRESH_BINARY_INV, 31, 12)
+    tinta = cv2.morphologyEx(tinta, cv2.MORPH_OPEN, np.ones((3, 3), np.uint8))
 
     contornos, _ = cv2.findContours(tinta, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     contornos = [c for c in contornos if cv2.contourArea(c) >= MIN_CONTOUR_AREA]
@@ -160,9 +122,22 @@ class Resultado:
 class Detector:
     def __init__(self, modelo="model.h5", classes="classes.json",
                  confianca_min=MIN_CONFIDENCE, suavizar=SMOOTH_FRAMES,
-                 frames_estavel=STABLE_FRAMES):
+                 frames_estavel=STABLE_FRAMES, max_fps_ia=MAX_FPS_IA,
+                 max_threads=MAX_THREADS):
         os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "2")
-        from tensorflow import keras   # import aqui: preprocessar() funciona sem TensorFlow
+        import tensorflow as tf        # import aqui: preprocessar() funciona sem TensorFlow
+        from tensorflow import keras
+
+        # Limita os núcleos do TensorFlow: sem isso ele disputa a CPU inteira com
+        # Vosk (ouvir), Piper (falar) e a interface, e tudo engasga.
+        # Precisa rodar ANTES de qualquer uso do TensorFlow no programa.
+        if max_threads:
+            try:
+                tf.config.threading.set_intra_op_parallelism_threads(int(max_threads))
+                tf.config.threading.set_inter_op_parallelism_threads(1)
+            except RuntimeError:
+                print("Aviso: o TensorFlow já estava em uso; não deu para limitar as threads. "
+                      "Crie o Detector antes de qualquer outro uso do TensorFlow.")
 
         if not (os.path.exists(modelo) and os.path.exists(classes)):
             raise FileNotFoundError(
@@ -183,10 +158,23 @@ class Detector:
         self._cand = None
         self._cand_n = 0
         self._ultimo = None
+        self._intervalo = (1.0 / max_fps_ia) if max_fps_ia else 0.0
+        self._t_ia = 0.0
 
     def reset(self):
         self._hist.clear()
         self._cand, self._cand_n, self._ultimo = None, 0, None
+        self._t_ia = 0.0
+
+    def medir(self, n=100):
+        """Mede quanto tempo UMA previsão leva neste PC. Retorna milissegundos."""
+        x = np.random.rand(1, 28, 28, 1).astype("float32")
+        for _ in range(10):                         # aquecimento
+            self.modelo(x, training=False)
+        t0 = time.perf_counter()
+        for _ in range(n):
+            self.modelo(x, training=False).numpy()
+        return (time.perf_counter() - t0) / n * 1000.0
 
     def detectar(self, roi):
         """Recebe o recorte (imagem BGR do quadrado) e devolve um Resultado."""
@@ -196,8 +184,13 @@ class Detector:
         if bitmap is None:
             self._hist.clear()
         else:
-            x = (bitmap.astype("float32") / 255.0).reshape(1, 28, 28, 1)
-            self._hist.append(self.modelo(x, training=False).numpy()[0])
+            # a IA só roda a cada 1/max_fps_ia segundos; nos frames entre uma e outra
+            # reaproveita a última previsão (o pré-processamento acima continua a cada frame)
+            agora = time.perf_counter()
+            if not self._hist or (agora - self._t_ia) >= self._intervalo:
+                x = (bitmap.astype("float32") / 255.0).reshape(1, 28, 28, 1)
+                self._hist.append(self.modelo(x, training=False).numpy()[0])
+                self._t_ia = agora
             probs = np.mean(self._hist, axis=0)
             ordem = np.argsort(probs)[::-1][:3]
             r.top = [(self.classes[i], float(probs[i])) for i in ordem]
@@ -290,13 +283,28 @@ def demo():
     p.add_argument("--modelo", default="model.h5")
     p.add_argument("--classes", default="classes.json")
     p.add_argument("--sem-debug", action="store_true", help="não abre a janela de debug")
+    p.add_argument("--fps-ia", type=int, default=MAX_FPS_IA,
+                   help=f"previsões da IA por segundo (padrão {MAX_FPS_IA}; 0 = todo frame)")
+    p.add_argument("--threads", type=int, default=MAX_THREADS,
+                   help=f"núcleos para o TensorFlow (padrão {MAX_THREADS}; 0 = sem limite)")
+    p.add_argument("--benchmark", action="store_true",
+                   help="só mede o tempo de uma previsão neste PC e sai (não abre a câmera)")
     args = p.parse_args()
+
+    det = Detector(args.modelo, args.classes, max_fps_ia=args.fps_ia, max_threads=args.threads)
+
+    if args.benchmark:
+        ms = det.medir()
+        print(f"Uma previsão leva {ms:.1f} ms neste PC "
+              f"(cabem ~{1000 / ms:.0f} previsões por segundo, usando só a IA).")
+        print("Se for mais que ~15 ms, treine com --tamanho leve (treinar.py).")
+        return
 
     cfg = carregar_config()
     if args.cam is not None:
         cfg["indice"] = args.cam
-    det = Detector(args.modelo, args.classes)
     cap, cfg = abrir_camera(cfg)
+    fps, t_fps = 0.0, time.perf_counter()
 
     debug, contornos = not args.sem_debug, True
     JANELA_DEBUG = "DEBUG (esq: tinta+contornos | dir: 28x28 da IA)"
@@ -318,6 +326,11 @@ def demo():
                       f"| contornos: {len(r.contornos)}")
 
         desenhar(frame, r, caixa, contornos)
+        agora = time.perf_counter()
+        fps = 0.9 * fps + 0.1 * (1.0 / max(agora - t_fps, 1e-6))
+        t_fps = agora
+        cv2.putText(frame, f"FPS {fps:.0f}", (frame.shape[1] - 110, 28),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
         cv2.imshow("Detector", frame)
         if debug:
             cv2.imshow(JANELA_DEBUG, painel_debug(r))

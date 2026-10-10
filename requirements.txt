@@ -14,6 +14,7 @@ scikit-learn==1.5.2
 
 # --- Desenho / SVG ---
 svgwrite==1.4.3
+svgpathtools>=1.6.1
 
 # --- Voz e LLM ---
 # A voz usa o executável do Piper que já vem em voice/piper/ (piper.exe),

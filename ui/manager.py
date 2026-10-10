@@ -88,7 +88,7 @@ class GameManager:
             )
 
     def confirmar_e_analisar(self, responder_fn):
-        if not self.state.aguardando_posicionamento and self.state.modo != MODO_DESAFIO:
+        if not (self.state.modo == MODO_DESAFIO and self.state.aguardando_posicionamento):
             return
 
         self.state.aguardando_posicionamento = False

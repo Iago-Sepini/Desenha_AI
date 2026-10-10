@@ -12,6 +12,7 @@ from vision.watcher import DrawingWatcher
 from voice.listener import Listener, listar_microfones, nome_do_microfone
 from voice.speaker import Speaker
 from voice.tts import PiperTTS
+from firmware.cnc import converter_svg_para_gcode, executar_cnc
 
 AJUDA = """
 Digite o que o visitante diria (ex.: oi, quem é você, sim, não).
@@ -130,9 +131,11 @@ def main():
                 if confirmar_operador_cnc():
                     print("[CNC] Operador confirmou o início!")
                     conversar(EVENTO_CNC_INICIOU)
+                    enviar_para_cnc()  # roda em thread própria; limpa o estado quando terminar
                 else:
                     print("[CNC] Operador CANCELOU a operação.")
                     conversar("O envio para a CNC foi cancelado pelo operador. Avise o visitante de forma simpática.")
+                    game_manager.limpar_estado()
 
                 game_manager.limpar_estado()
 
@@ -214,6 +217,29 @@ def main():
             pass
         finally:
             face.parar()
+
+    def enviar_para_cnc():
+        svg = watcher.ultimo_svg
+        if not svg:
+            conversar("Não encontrei um desenho salvo para mandar à CNC. "
+                        "Avise o visitante com simpatia e sugira desenhar de novo.")
+            game_manager.limpar_estado()
+            return
+
+        def trabalhar():
+            try:
+                gcode = converter_svg_para_gcode(svg)
+                executar_cnc(gcode)
+            except Exception as e:
+                print(f"[CNC] erro: {e}")
+                conversar("Algo deu errado ao desenhar na CNC. Avise o "
+                        "visitante com calma e sugira chamar um estudante da equipe.")
+            else:
+                conversar(EVENTO_CNC_TERMINOU)
+            finally:
+                game_manager.limpar_estado()
+
+        threading.Thread(target=trabalhar, daemon=True).start()
 
     listener = Listener(on_text=comando_voz, device=config.MIC_DEVICE)
     listener.start()

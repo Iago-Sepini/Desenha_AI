@@ -27,8 +27,8 @@ ARQUIVO_CONFIG = "camera_config.json"
 
 PADRAO = {
     "indice": 0,              # número da câmera (0 = primeira, 1 = segunda...)
-    "largura": 1280,          # resolução pedida à câmera
-    "altura": 720,
+    "largura": 640,           # resolução pedida à câmera (640x480 = bem mais rápido que 1280x720)
+    "altura": 480,
     "espelhar": False,        # inverte esquerda/direita
     "tamanho_quadrado": 0.6,  # tamanho da área de leitura (fração do menor lado, 0.2 a 0.95)
 }

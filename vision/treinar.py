@@ -3,13 +3,17 @@ TREINO — gera model.h5 e classes.json a partir do QuickDraw
 (as classes vêm do classes_quickdraw.py).
 
 Uso:
-    py -3.10 vision/treinar.py                        todas as classes (342) — demora bastante
-    py -3.10 vision/treinar.py --classes medio        ~71 classes (bom equilíbrio)
-    py -3.10 vision/treinar.py --classes basico       9 classes (rápido)
-    py -3.10 vision/treinar.py --escolher "cat,dog,house,sun"   só as que você escolher (nomes em inglês)
-    py -3.10 vision/treinar.py --amostras 800 --epocas 6        treino mais leve
-    py -3.10 vision/treinar.py --listar               mostra os nomes de todas as classes
-    py -3.10 vision/treinar.py --web                  também exporta para TensorFlow.js (precisa do tensorflowjs)
+    py -3.10 treinar.py                        todas as classes (342) — demora bastante
+    py -3.10 treinar.py --classes medio        ~71 classes (bom equilíbrio)
+    py -3.10 treinar.py --classes basico       9 classes (rápido)
+    py -3.10 treinar.py --escolher "cat,dog,house,sun"   só as que você escolher (nomes em inglês)
+    py -3.10 treinar.py --amostras 800 --epocas 6        treino mais leve
+    py -3.10 treinar.py --classes medio --tamanho leve   modelo mais rápido na câmera (leve | medio | grande)
+    py -3.10 treinar.py --listar               mostra os nomes de todas as classes
+    py -3.10 treinar.py --web                  também exporta para TensorFlow.js (precisa do tensorflowjs)
+
+Dica: rode fora do VS Code, para fechar o editor não matar o treino:
+    start "" py -3.10 treinar.py --classes medio
 
 Saída: model.h5 + classes.json (sempre juntos, da mesma execução). Os desenhos baixados
 ficam em data/ e não são baixados de novo.
@@ -87,28 +91,58 @@ def carregar_dados(classes, pasta, amostras):
     return np.concatenate(X).reshape(-1, 28, 28, 1), np.concatenate(y), validos
 
 
-def criar_modelo(n_classes):
-    return keras.Sequential([
-        layers.Input(shape=(28, 28, 1)),
-        layers.Conv2D(32, 3, padding="same", activation="relu"),
-        layers.Conv2D(32, 3, padding="same", activation="relu"),
-        layers.MaxPooling2D(),
-        layers.Conv2D(64, 3, padding="same", activation="relu"),
-        layers.Conv2D(64, 3, padding="same", activation="relu"),
-        layers.MaxPooling2D(),
-        layers.Conv2D(128, 3, padding="same", activation="relu"),
-        layers.MaxPooling2D(),
-        layers.Flatten(),
-        layers.Dense(512, activation="relu"),
-        layers.Dropout(0.4),
-        layers.Dense(n_classes, activation="softmax"),
-    ])
+def criar_modelo(n_classes, tamanho="medio"):
+    """Três tamanhos. O custo por previsão (milhões de multiplicações) NÃO depende do número
+    de classes, só da arquitetura:
+        leve   ~0,8 M  (≈ o modelo pequeno original)  -> mais rápido, um pouco menos preciso
+        medio  ~2,9 M  (≈ 4x o leve)                  -> equilíbrio (padrão)
+        grande ~22,5 M (≈ 30x o leve)                 -> mais preciso, pesado em CPU
+    """
+    if tamanho == "leve":
+        camadas = [
+            layers.Conv2D(16, 3, activation="relu"),
+            layers.MaxPooling2D(),
+            layers.Conv2D(32, 3, activation="relu"),
+            layers.MaxPooling2D(),
+            layers.Flatten(),
+            layers.Dense(128, activation="relu"),
+            layers.Dropout(0.3),
+        ]
+    elif tamanho == "medio":
+        camadas = [
+            layers.Conv2D(32, 3, activation="relu"),
+            layers.MaxPooling2D(),
+            layers.Conv2D(64, 3, activation="relu"),
+            layers.MaxPooling2D(),
+            layers.Conv2D(64, 3, activation="relu"),
+            layers.Flatten(),
+            layers.Dense(256, activation="relu"),
+            layers.Dropout(0.4),
+        ]
+    else:  # grande
+        camadas = [
+            layers.Conv2D(32, 3, padding="same", activation="relu"),
+            layers.Conv2D(32, 3, padding="same", activation="relu"),
+            layers.MaxPooling2D(),
+            layers.Conv2D(64, 3, padding="same", activation="relu"),
+            layers.Conv2D(64, 3, padding="same", activation="relu"),
+            layers.MaxPooling2D(),
+            layers.Conv2D(128, 3, padding="same", activation="relu"),
+            layers.MaxPooling2D(),
+            layers.Flatten(),
+            layers.Dense(512, activation="relu"),
+            layers.Dropout(0.4),
+        ]
+    return keras.Sequential([layers.Input(shape=(28, 28, 1)), *camadas,
+                             layers.Dense(n_classes, activation="softmax")])
 
 
 def main():
     p = argparse.ArgumentParser(description="Treino do reconhecedor de desenhos")
     p.add_argument("--classes", choices=["todas", "medio", "basico"], default="todas")
     p.add_argument("--escolher", help='nomes em inglês separados por vírgula, ex.: "cat,dog,house"')
+    p.add_argument("--tamanho", choices=["leve", "medio", "grande"], default="medio",
+                   help="tamanho do modelo: leve (rápido), medio (padrão) ou grande (pesado)")
     p.add_argument("--amostras", type=int, default=1500, help="imagens por classe (padrão 1500)")
     p.add_argument("--epocas", type=int, default=10, help="épocas de treino (padrão 10)")
     p.add_argument("--dados", default="data", help="pasta dos .npy baixados (padrão data)")
@@ -144,7 +178,7 @@ def main():
     ds_teste = (tf.data.Dataset.from_tensor_slices((X[corte:], y[corte:]))
                 .batch(256).map(normalizar).prefetch(tf.data.AUTOTUNE))
 
-    modelo = criar_modelo(len(validos))
+    modelo = criar_modelo(len(validos), args.tamanho)
     modelo.compile(optimizer="adam", loss="sparse_categorical_crossentropy", metrics=["accuracy"])
     modelo.summary()
 

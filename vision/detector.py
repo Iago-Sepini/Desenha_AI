@@ -21,10 +21,16 @@ Como módulo (no seu código principal):
         # r.estavel    -> último nome confirmado (não pisca)
 
 Como programa (demo com câmera, contornos, debug e texto no terminal):
-    py -3.10 detector.py
-    py -3.10 detector.py --cam 1 --sem-debug
+    py -3.10 vision/detector.py
+    py -3.10 vision/detector.py --cam 1 --sem-debug
+    py -3.10 vision/detector.py --visao pb        mostra o que a visão realmente vê (branco = vira SVG)
 
-Teclas: q = sair | d = debug | c = contornos | s = salvar print
+Teclas: q = sair | d = debug | c = contornos | b = visão (normal / pb / ambos) | s = salvar print
+
+Para mostrar a visão preto e branco no SEU código principal:
+    from detector import montar_visao
+    vista = montar_visao(frame, r, caixa, cfg["visao"])   # cfg vem do camera_config.json
+    cv2.imshow("Visão", vista)
 """
 import argparse
 import json
@@ -65,7 +71,7 @@ def preprocessar(roi):
                                   cv2.THRESH_BINARY_INV, 31, 12)
     tinta = cv2.morphologyEx(tinta, cv2.MORPH_OPEN, np.ones((3, 3), np.uint8))
 
-    contornos, _ = cv2.findContours(tinta, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    contornos, _ = cv2.findContours(tinta, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
     contornos = [c for c in contornos if cv2.contourArea(c) >= MIN_CONTOUR_AREA]
 
     ys, xs = np.nonzero(tinta)
@@ -241,6 +247,54 @@ def desenhar(frame, r, caixa, mostrar_contornos=True):
     return frame
 
 
+def _texto_contorno(img, texto, pos, escala=0.6, cor=(255, 255, 255)):
+    """Texto com borda preta: legível mesmo em cima do branco da máscara."""
+    esp = 2 if escala >= 0.7 else 1
+    x, y = pos
+    # a borda é o MESMO texto em preto deslocado alguns pixels (com letra mais grossa o
+    # espaçamento muda e a sombra desalinha)
+    for dx, dy in ((-2, 0), (2, 0), (0, -2), (0, 2), (-1, -1), (1, -1), (-1, 1), (1, 1)):
+        cv2.putText(img, texto, (x + dx, y + dy), cv2.FONT_HERSHEY_SIMPLEX, escala, (0, 0, 0), esp)
+    cv2.putText(img, texto, pos, cv2.FONT_HERSHEY_SIMPLEX, escala, cor, esp)
+
+
+texto_contorno = _texto_contorno   # nome público (usado pelo vision/watcher.py)
+
+
+def visao_pb(frame, r, caixa):
+    """O que a visão REALMENTE enxerga, em preto e branco.
+
+    BRANCO = tinta = o que vira contorno (e depois SVG). Dentro do quadrado verde é a máscara
+    de verdade, a mesma que o detector usa; fora dele a câmera aparece bem escura, só de
+    referência. Se o desenho sair falhado/ruidoso aqui, vai sair assim também no SVG:
+    ajuste luz, caneta mais escura/grossa ou o tamanho do quadrado.
+    Retorna uma imagem nova (não modifica o frame)."""
+    x0, y0, lado = caixa
+    fundo = cv2.cvtColor(cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY), cv2.COLOR_GRAY2BGR)
+    out = cv2.convertScaleAbs(fundo, alpha=0.2)
+    if r.tinta is not None and r.tinta.shape[:2] == (lado, lado):
+        out[y0:y0 + lado, x0:x0 + lado] = cv2.cvtColor(r.tinta, cv2.COLOR_GRAY2BGR)
+    cv2.rectangle(out, (x0, y0), (x0 + lado, y0 + lado), (0, 255, 0), 2)
+    pixels = int(np.count_nonzero(r.tinta)) if r.tinta is not None else 0
+    _texto_contorno(out, "BRANCO = vira SVG", (10, 28), 0.7)
+    _texto_contorno(out, f"tinta: {pixels} px | contornos: {len(r.contornos)}",
+                    (10, out.shape[0] - 12), 0.55, (200, 200, 200))
+    return out
+
+
+def montar_visao(frame, r, caixa, modo="normal", mostrar_contornos=True):
+    """Imagem para mostrar na tela conforme o modo da config ("visao"):
+        "normal" = câmera com quadrado, contornos e nome (igual a desenhar())
+        "pb"     = preto e branco (branco = vira SVG)
+        "ambos"  = os dois lado a lado (imagem com o dobro da largura)"""
+    if modo == "pb":
+        return visao_pb(frame, r, caixa)
+    if modo == "ambos":
+        normal = desenhar(frame.copy(), r, caixa, mostrar_contornos)
+        return np.hstack([normal, visao_pb(frame, r, caixa)])
+    return desenhar(frame, r, caixa, mostrar_contornos)
+
+
 def painel_debug(r, tamanho=280):
     """Imagem de debug: à esquerda tinta+contornos, à direita o 28x28 da IA, embaixo números."""
     if r.tinta is None:
@@ -271,7 +325,12 @@ def painel_debug(r, tamanho=280):
 
 # ------------------------------------------------------------------ demo
 def demo():
-    from config_camera import abrir_camera, carregar_config, ler_frame, recortar_quadrado
+    try:                                   # dentro do pacote vision/
+        from .config_camera import (MODOS_VISAO, abrir_camera, carregar_config, ler_frame,
+                                    proximo_modo, recortar_quadrado)
+    except ImportError:                    # rodando solto: py detector.py
+        from config_camera import (MODOS_VISAO, abrir_camera, carregar_config, ler_frame,
+                                   proximo_modo, recortar_quadrado)
 
     try:
         sys.stdout.reconfigure(encoding="utf-8")   # acentos no CMD
@@ -289,6 +348,9 @@ def demo():
                    help=f"núcleos para o TensorFlow (padrão {MAX_THREADS}; 0 = sem limite)")
     p.add_argument("--benchmark", action="store_true",
                    help="só mede o tempo de uma previsão neste PC e sai (não abre a câmera)")
+    p.add_argument("--visao", choices=MODOS_VISAO,
+                   help="normal, pb (preto e branco: branco = vira SVG) ou ambos "
+                        "(senão usa a 'visao' do camera_config.json)")
     args = p.parse_args()
 
     det = Detector(args.modelo, args.classes, max_fps_ia=args.fps_ia, max_threads=args.threads)
@@ -303,6 +365,8 @@ def demo():
     cfg = carregar_config()
     if args.cam is not None:
         cfg["indice"] = args.cam
+    if args.visao:
+        cfg["visao"] = args.visao
     cap, cfg = abrir_camera(cfg)
     fps, t_fps = 0.0, time.perf_counter()
 
@@ -325,13 +389,12 @@ def demo():
                 print(f"[{hora}] Estou vendo: {r.estavel} ({r.confianca * 100:.0f}%) "
                       f"| contornos: {len(r.contornos)}")
 
-        desenhar(frame, r, caixa, contornos)
+        vista = montar_visao(frame, r, caixa, cfg["visao"], contornos)
         agora = time.perf_counter()
         fps = 0.9 * fps + 0.1 * (1.0 / max(agora - t_fps, 1e-6))
         t_fps = agora
-        cv2.putText(frame, f"FPS {fps:.0f}", (frame.shape[1] - 110, 28),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
-        cv2.imshow("Detector", frame)
+        _texto_contorno(vista, f"FPS {fps:.0f}", (vista.shape[1] - 110, 28), 0.7)
+        cv2.imshow("Detector", vista)
         if debug:
             cv2.imshow(JANELA_DEBUG, painel_debug(r))
 
@@ -340,6 +403,9 @@ def demo():
             break
         elif key == ord("c"):
             contornos = not contornos
+        elif key == ord("b"):
+            cfg["visao"] = proximo_modo(cfg["visao"])
+            print(f"Visão: {cfg['visao']}")
         elif key == ord("d"):
             debug = not debug
             if not debug:
@@ -347,7 +413,7 @@ def demo():
         elif key == ord("s"):
             os.makedirs("capturas", exist_ok=True)
             nome = os.path.join("capturas", time.strftime("%Y%m%d_%H%M%S") + ".png")
-            cv2.imwrite(nome, frame)
+            cv2.imwrite(nome, vista)
             print(f"Print salvo em {nome}")
 
     cap.release()

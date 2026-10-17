@@ -1,36 +1,38 @@
 # main.py
+import os
 import threading
 
 import config
 from ai.llm import GroqLLM
 from ai.prompts import EVENTO_CNC_INICIOU, EVENTO_CNC_TERMINOU, EVENTO_NAO_IDENTIFICADO
+from firmware.cnc import converter_svg_para_gcode, executar_cnc
 from server.state import PARADO, PENSANDO, State
 from ui.dialogs import confirmar_operador_cnc
 from ui.face import Face
 from ui.manager import GameManager
+from vision.svg_export import gerar_svg
 from vision.watcher import DrawingWatcher
 from voice.listener import Listener, listar_microfones, nome_do_microfone
 from voice.speaker import Speaker
 from voice.tts import PiperTTS
-from firmware.cnc import converter_svg_para_gcode, executar_cnc
 
 AJUDA = """
 Digite o que o visitante diria (ex.: oi, quem é você, sim, não).
 Modos de Jogo:
-  /modo livre         ativa o modo livre (sem tempo limite)
-  /desafio            inicia o desafio rápido (30s para desenhar um item sorteado)
+  /modo livre        ativa o modo livre (sem tempo limite)
+  /desafio           inicia o desafio rápido (30s para desenhar um item sorteado)
 
 Simulações:
-  /desenho <nome>     simula a visão identificando um desenho (ex.: /desenho casa)
-  /naoidentificado    a visão não conseguiu identificar
-  /cnc inicio         a CNC começou a desenhar
-  /cnc fim            a CNC terminou
-  /novo               novo visitante (zera a conversa e o reconhecimento)
+  /desenho <nome>    simula a visão identificando um desenho (ex.: /desenho casa)
+  /naoidentificado   a visão não conseguiu identificar
+  /cnc inicio        a CNC começou a desenhar
+  /cnc fim           a CNC terminou
+  /novo              novo visitante (zera a conversa e o reconhecimento)
 
 Microfone:
-  /mics               lista os microfones e testa qual funciona
-  /mic <n|nome>       troca o microfone (ex.: /mic 14   ou   /mic QCY)
-  /mic                mostra o microfone em uso
+  /mics              lista os microfones e testa qual funciona
+  /mic <n|nome>      troca o microfone (ex.: /mic 14   ou   /mic QCY)
+  /mic               mostra o microfone em uso
 Fala:  parar | continuar
 Sair:  sair
 """
@@ -131,7 +133,7 @@ def main():
                 if confirmar_operador_cnc():
                     print("[CNC] Operador confirmou o início!")
                     conversar(EVENTO_CNC_INICIOU)
-                    enviar_para_cnc()  # roda em thread própria; limpa o estado quando terminar
+                    enviar_para_cnc()  # Converte contornos -> SVG -> G-code -> Envia para a CNC
                 else:
                     print("[CNC] Operador CANCELOU a operação.")
                     conversar("O envio para a CNC foi cancelado pelo operador. Avise o visitante de forma simpática.")
@@ -146,7 +148,6 @@ def main():
             speaker.pause()
         elif txt == "continuar":
             speaker.resume()
-        # No Modo Desafio (após os 30s), aceita confirmações diretas de posicionamento do papel
         elif state.aguardando_posicionamento and any(f in txt for f in FRASES_PRONTO):
             game_manager.confirmar_e_analisar(responder)
         elif any(f in txt for f in FRASES_DESAFIO):
@@ -219,21 +220,30 @@ def main():
             face.parar()
 
     def enviar_para_cnc():
-        svg = watcher.ultimo_svg
-        if not svg:
+        # 1. Verifica se existem contornos capturados pela visão
+        if not watcher.ultimos_contornos:
             conversar("Não encontrei um desenho salvo para mandar à CNC. "
-                        "Avise o visitante com simpatia e sugira desenhar de novo.")
+                      "Avise o visitante com simpatia e sugira desenhar de novo.")
             game_manager.limpar_estado()
             return
 
         def trabalhar():
             try:
-                gcode = converter_svg_para_gcode(svg)
-                executar_cnc(gcode)
+                # 2. Gera o SVG a partir dos contornos (salva em 'desenho.svg')
+                svg_path = gerar_svg(watcher.ultimos_contornos, tamanho=300, caminho="desenho.svg")
+                if not svg_path or not os.path.exists(svg_path):
+                    raise FileNotFoundError("Não foi possível gerar o arquivo SVG dos contornos.")
+
+                # 3. Converte o SVG para G-code ('desenho.gcode')
+                gcode_path = converter_svg_para_gcode(svg_path)
+
+                # 4. Envia para a CNC via serial GRBL
+                executar_cnc(gcode_path)
+
             except Exception as e:
                 print(f"[CNC] erro: {e}")
                 conversar("Algo deu errado ao desenhar na CNC. Avise o "
-                        "visitante com calma e sugira chamar um estudante da equipe.")
+                          "visitante com calma e sugira chamar um estudante da equipe.")
             else:
                 conversar(EVENTO_CNC_TERMINOU)
             finally:

@@ -3,5 +3,6 @@
   "largura": 1600,
   "altura": 810,
   "espelhar": false,
-  "tamanho_quadrado": 0.9
+  "tamanho_quadrado": 0.9,
+  "visao": "pb"
 }

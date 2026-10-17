@@ -70,16 +70,23 @@ def _limites_dos_caminhos(paths):
 def converter_svg_para_gcode(svg_path, output_path=None):
     """
     FUNÇÃO 1: converte um SVG em G-code, salva o arquivo e retorna seu caminho.
-
-    Exemplo:
-        gcode = converter_svg_para_gcode("desenho.svg")
-        # Resultado: "desenho.gcode" (não executa a máquina)
     """
     svg_path = Path(svg_path)
     if not svg_path.is_file():
         raise FileNotFoundError(f"Não encontrei o SVG: {svg_path}")
 
-    paths, attributes, svg_attributes = svg2paths2(str(svg_path))
+    # Limpa os atributos width e height do SVG para o svgpathtools não quebrar com '100%' ou 'px'
+    texto_svg = svg_path.read_text(encoding="utf-8", errors="ignore")
+    texto_limpo = re.sub(r'\s+(width|height)="[^"]*"', '', texto_svg)
+    svg_temp = svg_path.with_name("svg_temp_processamento.svg")
+    svg_temp.write_text(texto_limpo, encoding="utf-8")
+
+    try:
+        paths, attributes, svg_attributes = svg2paths2(str(svg_temp))
+    finally:
+        if svg_temp.is_file():
+            svg_temp.unlink()
+
     paths = [p for p in paths if len(p) > 0]
     if not paths:
         raise ValueError(
@@ -90,6 +97,15 @@ def converter_svg_para_gcode(svg_path, output_path=None):
     xmin, xmax, ymin, ymax = _limites_dos_caminhos(paths)
     width = xmax - xmin
     height = ymax - ymin
+
+    if width <= 0 or height <= 0:
+        viewBox = svg_attributes.get('viewBox')
+        if viewBox:
+            partes = re.findall(r"[-+]?\d*\.\d+|\d+", viewBox)
+            if len(partes) >= 4:
+                xmin, ymin, width, height = float(partes[0]), float(partes[1]), float(partes[2]), float(partes[3])
+                xmax, ymax = xmin + width, ymin + height
+
     if width <= 0 or height <= 0:
         raise ValueError("O desenho SVG tem largura ou altura inválida.")
 

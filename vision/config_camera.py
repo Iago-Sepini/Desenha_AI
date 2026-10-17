@@ -12,9 +12,16 @@ Como programa (para configurar):
     py -3.10 vision/config_camera.py --testar              abre o preview para ajustar e salvar
     py -3.10 vision/config_camera.py --testar --cam 1      testa a câmera de índice 1
 
+Visão preto e branco ("visao" no camera_config.json):
+    "normal" = a câmera com os contornos coloridos (padrão)
+    "pb"     = tudo em PRETO E BRANCO: BRANCO = o que a visão enxerga como traço, ou seja,
+               o que vira contorno/SVG. Fora do quadrado verde a imagem fica bem escura.
+    "ambos"  = os dois lado a lado
+    Para ver: py -3.10 config_camera.py --testar --visao pb   (tecla b alterna; s salva)
+
 Teclas no preview:
-    n = próxima câmera | m = espelhar | + / - = tamanho do quadrado
-    s = SALVAR em camera_config.json | q = sair
+    n = próxima câmera | m = espelhar | b = visão (normal / pb / ambos)
+    + / - = tamanho do quadrado | s = SALVAR em camera_config.json | q = sair
 """
 import argparse
 import json
@@ -22,8 +29,10 @@ import os
 import platform
 
 import cv2
+import numpy as np
 
 ARQUIVO_CONFIG = "camera_config.json"
+MODOS_VISAO = ("normal", "pb", "ambos")
 
 PADRAO = {
     "indice": 0,              # número da câmera (0 = primeira, 1 = segunda...)
@@ -31,6 +40,7 @@ PADRAO = {
     "altura": 480,
     "espelhar": False,        # inverte esquerda/direita
     "tamanho_quadrado": 0.6,  # tamanho da área de leitura (fração do menor lado, 0.2 a 0.95)
+    "visao": "normal",        # "normal", "pb" (preto e branco: branco = vira SVG) ou "ambos"
 }
 
 
@@ -43,7 +53,16 @@ def carregar_config(caminho=ARQUIVO_CONFIG):
                 cfg.update(json.load(f))
         except Exception as e:
             print(f"Aviso: não consegui ler {caminho} ({e}). Usando o padrão.")
+    if cfg.get("visao") not in MODOS_VISAO:
+        print(f"Aviso: visao '{cfg.get('visao')}' inválida; usando 'normal'. Opções: {MODOS_VISAO}")
+        cfg["visao"] = "normal"
     return cfg
+
+
+def proximo_modo(modo):
+    """normal -> pb -> ambos -> normal ..."""
+    i = MODOS_VISAO.index(modo) if modo in MODOS_VISAO else 0
+    return MODOS_VISAO[(i + 1) % len(MODOS_VISAO)]
 
 
 def salvar_config(cfg, caminho=ARQUIVO_CONFIG):
@@ -105,27 +124,42 @@ def recortar_quadrado(frame, cfg):
 
 # ---------------------------------------------------------------- preview
 def testar(cfg):
+    # a visão preto e branco usa o mesmo pré-processamento do detector (não precisa de TensorFlow)
+    try:                                   # dentro do pacote vision/
+        from .detector import Resultado, preprocessar, visao_pb
+    except ImportError:                    # rodando solto: py config_camera.py
+        from detector import Resultado, preprocessar, visao_pb
+
     cap, cfg = abrir_camera(cfg)
-    print("Preview aberto. n=próxima câmera | m=espelhar | +/-=tamanho | s=salvar | q=sair")
+    print("Preview aberto. n=próxima câmera | m=espelhar | b=visão P&B | +/-=tamanho | s=salvar | q=sair")
     while True:
         frame = ler_frame(cap, cfg)
         if frame is None:
             print("Sem imagem da câmera.")
             break
-        _, (x0, y0, lado) = recortar_quadrado(frame, cfg)
-        cv2.rectangle(frame, (x0, y0), (x0 + lado, y0 + lado), (0, 255, 0), 2)
+        roi, caixa = recortar_quadrado(frame, cfg)
+        x0, y0, lado = caixa
+        vista = frame.copy()
+        cv2.rectangle(vista, (x0, y0), (x0 + lado, y0 + lado), (0, 255, 0), 2)
         info = (f"cam {cfg['indice']} | {frame.shape[1]}x{frame.shape[0]} | "
-                f"quadrado {cfg['tamanho_quadrado']:.2f} | espelho {'ON' if cfg['espelhar'] else 'OFF'}")
-        cv2.putText(frame, info, (10, 28), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (0, 255, 255), 2)
-        cv2.putText(frame, "n=camera m=espelhar +/-=tamanho s=salvar q=sair", (10, frame.shape[0] - 12),
+                f"quadrado {cfg['tamanho_quadrado']:.2f} | espelho {'ON' if cfg['espelhar'] else 'OFF'} | "
+                f"visao {cfg['visao']}")
+        cv2.putText(vista, info, (10, 28), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
+        cv2.putText(vista, "n=camera m=espelhar b=visao +/-=tamanho s=salvar q=sair", (10, vista.shape[0] - 12),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 1)
-        cv2.imshow("Config camera", frame)
+        if cfg["visao"] != "normal":
+            _, tinta, contornos = preprocessar(roi)
+            pb = visao_pb(frame, Resultado(tinta=tinta, contornos=contornos), caixa)
+            vista = pb if cfg["visao"] == "pb" else np.hstack([vista, pb])
+        cv2.imshow("Config camera", vista)
 
         key = cv2.waitKey(1) & 0xFF
         if key == ord("q"):
             break
         elif key == ord("m"):
             cfg["espelhar"] = not cfg["espelhar"]
+        elif key == ord("b"):
+            cfg["visao"] = proximo_modo(cfg["visao"])
         elif key in (ord("+"), ord("=")):
             cfg["tamanho_quadrado"] = min(0.95, round(cfg["tamanho_quadrado"] + 0.05, 2))
         elif key == ord("-"):
@@ -154,6 +188,8 @@ def main():
     p.add_argument("--cam", type=int, help="índice da câmera")
     p.add_argument("--largura", type=int)
     p.add_argument("--altura", type=int)
+    p.add_argument("--visao", choices=MODOS_VISAO,
+                   help="normal, pb (preto e branco: branco = vira SVG) ou ambos")
     args = p.parse_args()
 
     if args.listar:
@@ -171,6 +207,8 @@ def main():
         cfg["largura"] = args.largura
     if args.altura:
         cfg["altura"] = args.altura
+    if args.visao:
+        cfg["visao"] = args.visao
 
     if args.testar:
         testar(cfg)

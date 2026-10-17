@@ -2,15 +2,18 @@ import threading
 import time
 
 import cv2
+import numpy as np
 
-from vision.config_camera import abrir_camera, ler_frame, recortar_quadrado
-from vision.detector import Detector, sem_acento
-
+from vision.config_camera import abrir_camera, ler_frame, proximo_modo, recortar_quadrado
+from vision.detector import Detector, sem_acento, texto_contorno, visao_pb
 
 class DrawingWatcher:
     """Roda a câmera e o Detector continuamente, mostrando uma janela com o
     que está sendo reconhecido no momento. NÃO avisa o Max sozinho: quem
-    decide a hora certa é quem chama confirmar()."""
+    decide a hora certa é quem chama confirmar().
+
+    A janela segue a "visao" do camera_config.json: "normal", "pb" (preto e
+    branco: branco = o que vira SVG) ou "ambos". Na janela, a tecla B alterna."""
 
     def __init__(self, on_desenho, modelo="model.h5", classes="classes.json", mostrar_janela=True):
         self.on_desenho = on_desenho
@@ -64,7 +67,7 @@ class DrawingWatcher:
                 self.confianca_atual = r.confianca if r.estavel else 0.0
 
                 if self.mostrar_janela:
-                    self._desenhar_janela(frame, caixa)
+                    self._desenhar_janela(frame, r, caixa, cfg)
 
                 time.sleep(0.03)
         finally:
@@ -72,17 +75,39 @@ class DrawingWatcher:
             if self.mostrar_janela:
                 cv2.destroyAllWindows()
 
-    def _desenhar_janela(self, frame, caixa):
-        x0, y0, lado = caixa
-        cv2.rectangle(frame, (x0, y0), (x0 + lado, y0 + lado), (0, 255, 0), 2)
-
+    # ---------- janela ----------
+    def _texto_deteccao(self):
         if self.nome_atual:
             texto = f"Detectando: {sem_acento(self.nome_atual)} {self.confianca_atual * 100:.0f}%"
-            cor = (0, 255, 0)
-        else:
-            texto = "Detectando: ..."
-            cor = (0, 200, 255)
+            return texto, (0, 255, 0)
+        return "Detectando: ...", (0, 200, 255)
 
+    def _vista_normal(self, frame, caixa):
+        """A janela de sempre: câmera + quadrado verde + texto."""
+        x0, y0, lado = caixa
+        cv2.rectangle(frame, (x0, y0), (x0 + lado, y0 + lado), (0, 255, 0), 2)
+        texto, cor = self._texto_deteccao()
         cv2.putText(frame, texto, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, cor, 2)
-        cv2.imshow("Camera - Desenha AI", frame)
-        cv2.waitKey(1)
+        return frame
+
+    def _vista_pb(self, frame, r, caixa):
+        """Preto e branco: BRANCO = o que a visão enxerga como traço (vira SVG)."""
+        vista = visao_pb(frame, r, caixa)
+        texto, cor = self._texto_deteccao()
+        texto_contorno(vista, texto, (10, 58), 0.8, cor)   # abaixo da legenda "BRANCO = vira SVG"
+        return vista
+
+    def _desenhar_janela(self, frame, r, caixa, cfg):
+        modo = cfg.get("visao", "normal")
+        if modo == "pb":
+            vista = self._vista_pb(frame, r, caixa)
+        elif modo == "ambos":
+            vista = np.hstack([self._vista_normal(frame.copy(), caixa),
+                               self._vista_pb(frame, r, caixa)])
+        else:
+            vista = self._vista_normal(frame, caixa)
+
+        cv2.imshow("Camera - Desenha AI", vista)
+        tecla = cv2.waitKey(1) & 0xFF
+        if tecla == ord("b"):                     # alterna normal -> pb -> ambos
+            cfg["visao"] = proximo_modo(modo)

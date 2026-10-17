@@ -11,7 +11,7 @@ from ai.prompts import (
 from server.state import FALANDO, MODO_DESAFIO, MODO_LIVRE, PENSANDO, State
 from vision.svg_export import gerar_svg
 
-PALAVRAS_DESAFIO = ["casa", "árvore", "carro", "sol", "estrela", "gato", "coração", "peixe", "flor"]
+PALAVRAS_DESAFIO = ["avião", "maçã", "banana", "cama", "bicicleta", "pássaro", "livro", "ponte", "ônibus", "borboleta", "bolo", "câmera", "carro", "gato", "cadeira", "relógio de parede", "nuvem", "vaca", "copo", "cachorro", "porta", "pato", "elefante", "olho", "rosto", "peixe", "flor", "garfo", "girafa", "guitarra", "mão", "chapéu", "cavalo", "casa", "chave", "faca", "escada", "folha", "lâmpada", "raio", "lua", "montanha", "cogumelo", "lápis", "porco", "pizza", "coelho", "arco-íris", "tesoura", "tubarão", "sapato", "carinha feliz", "caracol", "cobra", "boneco de neve", "bola", "aranha", "colher", "estrela", "sol", "espada", "mesa", "barraca", "dente", "trem", "árvore", "caminhão", "guarda-chuva", "baleia", "caveira", "coroa"]
 
 
 class GameManager:

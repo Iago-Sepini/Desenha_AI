@@ -75,8 +75,18 @@ def main():
     def conversar(mensagem: str):
         responder(lambda: llm.chat(mensagem))
 
+    # Função intermediária para congelar e salvar o SVG no exato momento da detecção
+    def ao_detectar_desenho(obj):
+        if watcher.ultimos_contornos:
+            try:
+                gerar_svg(watcher.ultimos_contornos, tamanho=300, caminho="desenho.svg")
+                print("[sistema] Desenho congelado e salvo em desenho.svg com sucesso!")
+            except Exception as e:
+                print(f"[aviso] Erro ao salvar SVG prévio: {e}")
+        game_manager.processar_desenho(obj, responder)
+
     # Inicialização da Visão e do Gerenciador de Jogos
-    watcher = DrawingWatcher(on_desenho=lambda obj: game_manager.processar_desenho(obj, responder))
+    watcher = DrawingWatcher(on_desenho=ao_detectar_desenho)
     watcher.start()
 
     game_manager = GameManager(
@@ -133,7 +143,7 @@ def main():
                 if confirmar_operador_cnc():
                     print("[CNC] Operador confirmou o início!")
                     conversar(EVENTO_CNC_INICIOU)
-                    enviar_para_cnc()  # Converte contornos -> SVG -> G-code -> Envia para a CNC
+                    enviar_para_cnc()  # Converte o SVG salvo -> G-code -> Envia para a CNC
                 else:
                     print("[CNC] Operador CANCELOU a operação.")
                     conversar("O envio para a CNC foi cancelado pelo operador. Avise o visitante de forma simpática.")
@@ -220,8 +230,8 @@ def main():
             face.parar()
 
     def enviar_para_cnc():
-        # 1. Verifica se existem contornos capturados pela visão
-        if not watcher.ultimos_contornos:
+        svg_path = "desenho.svg"
+        if not os.path.exists(svg_path):
             conversar("Não encontrei um desenho salvo para mandar à CNC. "
                       "Avise o visitante com simpatia e sugira desenhar de novo.")
             game_manager.limpar_estado()
@@ -229,17 +239,9 @@ def main():
 
         def trabalhar():
             try:
-                # 2. Gera o SVG a partir dos contornos (salva em 'desenho.svg')
-                svg_path = gerar_svg(watcher.ultimos_contornos, tamanho=300, caminho="desenho.svg")
-                if not svg_path or not os.path.exists(svg_path):
-                    raise FileNotFoundError("Não foi possível gerar o arquivo SVG dos contornos.")
-
-                # 3. Converte o SVG para G-code ('desenho.gcode')
+                # Converte o SVG fixo do disco para G-code e envia para a CNC com segurança
                 gcode_path = converter_svg_para_gcode(svg_path)
-
-                # 4. Envia para a CNC via serial GRBL
                 executar_cnc(gcode_path)
-
             except Exception as e:
                 print(f"[CNC] erro: {e}")
                 conversar("Algo deu errado ao desenhar na CNC. Avise o "

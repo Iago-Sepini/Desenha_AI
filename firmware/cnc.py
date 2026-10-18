@@ -1,36 +1,15 @@
 """
-svg_cnc_duas_funcoes.py
+firmware/cnc.py
 
-Duas funções:
-1) converter_svg_para_gcode(): transforma um arquivo SVG em G-code e salva.
-2) executar_cnc(): envia um arquivo G-code para uma CNC GRBL pela serial.
-
-Instalação (Windows / Python 3.12):
-    py -3.12 -m pip install svgpathtools pyserial
-
-Uso:
-    from svg_cnc_duas_funcoes import converter_svg_para_gcode, executar_cnc
-
-    gcode = converter_svg_para_gcode("desenho.svg")  # só converte; não move a CNC
-    executar_cnc(gcode)                              # envia para COM18
-
-Configuração:
-    X máximo = 16 mm; Y máximo = 24 mm
-    Área de desenho = 14 x 21 mm, com margens
-    Z0 = caneta levantada; Z20 = caneta abaixada
-    Porta serial = COM18; baudrate = 115200
-
-IMPORTANTE:
-- Confirme que a máquina realmente levanta em Z0 e abaixa em Z20.
-- Faça um teste com a caneta longe do papel e mantenha o botão de emergência acessível.
-- Feche Candle, UGS ou qualquer programa que esteja usando COM18.
-- SVGs devem ter seus elementos convertidos em <path>. O script lê caminhos SVG.
+1) converter_svg_para_gcode(): transforma um arquivo SVG em G-code.
+2) executar_cnc(): envia um arquivo G-code para a CNC GRBL pela serial.
 """
 
 from pathlib import Path
 import math
 import re
 import time
+import io
 
 import serial
 from svgpathtools import svg2paths2
@@ -57,8 +36,18 @@ BAUDRATE_PADRAO = 115200
 
 
 def _limites_dos_caminhos(paths):
-    """Retorna xmin, xmax, ymin, ymax dos caminhos SVG."""
-    boxes = [path.bbox() for path in paths]
+    """Retorna xmin, xmax, ymin, ymax dos caminhos SVG de forma segura."""
+    boxes = []
+    for p in paths:
+        try:
+            if len(p) > 0:
+                boxes.append(p.bbox())
+        except Exception:
+            continue
+
+    if not boxes:
+        return 0.0, 0.0, 0.0, 0.0
+
     return (
         min(b[0] for b in boxes),
         max(b[1] for b in boxes),
@@ -69,47 +58,50 @@ def _limites_dos_caminhos(paths):
 
 def converter_svg_para_gcode(svg_path, output_path=None):
     """
-    FUNÇÃO 1: converte um SVG em G-code, salva o arquivo e retorna seu caminho.
+    Lê o SVG do disco (SEM MODIFICÁ-LO) e gera o arquivo G-code correspondente.
     """
     svg_path = Path(svg_path)
     if not svg_path.is_file():
         raise FileNotFoundError(f"Não encontrei o SVG: {svg_path}")
 
-    # Limpa os atributos width e height do SVG para o svgpathtools não quebrar com '100%' ou 'px'
+    # LÊ O SVG COMO STRING E CRIA UM ARQUIVO TEMPORÁRIO SEPARADO SÓ PARA O SVGPATHTOOLS
+    # Isso garante que o desenho.svg original NUNCA seja sobrescrito.
     texto_svg = svg_path.read_text(encoding="utf-8", errors="ignore")
+    
+    # Remove width/height em porcentagem em memória
     texto_limpo = re.sub(r'\s+(width|height)="[^"]*"', '', texto_svg)
-    svg_temp = svg_path.with_name("svg_temp_processamento.svg")
-    svg_temp.write_text(texto_limpo, encoding="utf-8")
 
+    svg_temp = svg_path.parent / "_temp_cnc_processing.svg"
     try:
+        svg_temp.write_text(texto_limpo, encoding="utf-8")
         paths, attributes, svg_attributes = svg2paths2(str(svg_temp))
     finally:
-        if svg_temp.is_file():
-            svg_temp.unlink()
+        if svg_temp.exists():
+            try:
+                svg_temp.unlink()
+            except Exception:
+                pass
 
-    paths = [p for p in paths if len(p) > 0]
-    if not paths:
-        raise ValueError(
-            "O SVG não contém elementos <path>. No Inkscape, selecione os "
-            "objetos e use Caminho > Objeto para caminho, depois salve como SVG."
-        )
+    # Filtra caminhos válidos (descarta caminhos de comprimento zero)
+    paths_validos = []
+    for p in paths:
+        try:
+            if len(p) > 0 and p.length() > 0.01:
+                paths_validos.append(p)
+        except Exception:
+            pass
 
-    xmin, xmax, ymin, ymax = _limites_dos_caminhos(paths)
+    if not paths_validos:
+        raise ValueError("O SVG não contém caminhos (<path>) válidos para desenhar.")
+
+    xmin, xmax, ymin, ymax = _limites_dos_caminhos(paths_validos)
     width = xmax - xmin
     height = ymax - ymin
 
     if width <= 0 or height <= 0:
-        viewBox = svg_attributes.get('viewBox')
-        if viewBox:
-            partes = re.findall(r"[-+]?\d*\.\d+|\d+", viewBox)
-            if len(partes) >= 4:
-                xmin, ymin, width, height = float(partes[0]), float(partes[1]), float(partes[2]), float(partes[3])
-                xmax, ymax = xmin + width, ymin + height
-
-    if width <= 0 or height <= 0:
         raise ValueError("O desenho SVG tem largura ou altura inválida.")
 
-    # Ajusta proporcionalmente à área 14 x 21 mm, sem deformar o desenho.
+    # Escala e centralização na área útil de 14x21mm
     scale = min(DRAW_W / width, DRAW_H / height)
     drawn_w = width * scale
     drawn_h = height * scale
@@ -117,13 +109,13 @@ def converter_svg_para_gcode(svg_path, output_path=None):
     offset_y = MARGIN_Y + (DRAW_H - drawn_h) / 2
 
     def transformar(point):
-        # Inverte o eixo Y do SVG para coordenadas cartesianas da CNC.
+        # Inverte o eixo Y do SVG para coordenadas cartesianas da CNC
         x = offset_x + (point.real - xmin) * scale
         y = offset_y + (ymax - point.imag) * scale
         return x, y
 
     lines = [
-        "; SVG para G-code - svg_cnc_duas_funcoes.py",
+        "; SVG para G-code - cnc.py",
         "; Limites fisicos: X16 mm, Y24 mm",
         "; Area do desenho: 14 x 21 mm",
         "; Z0 = caneta levantada; Z20 = caneta abaixada",
@@ -134,7 +126,7 @@ def converter_svg_para_gcode(svg_path, output_path=None):
         f"G0 Z{Z_UP:.3f}",
     ]
 
-    for path in paths:
+    for path in paths_validos:
         try:
             length = path.length(error=1e-3)
         except Exception:
@@ -146,10 +138,11 @@ def converter_svg_para_gcode(svg_path, output_path=None):
         count = max(2, min(20000, math.ceil(length * scale / SAMPLE_MM)))
         points = [transformar(path.point(i / count)) for i in range(count + 1)]
 
+        # Validação de limites físicos da máquina
         for x, y in points:
             if not (0 <= x <= MAX_X and 0 <= y <= MAX_Y):
                 raise ValueError(
-                    f"Coordenada fora dos limites: X{x:.3f} Y{y:.3f}"
+                    f"Coordenada fora dos limites físicos da CNC: X{x:.3f} Y{y:.3f}"
                 )
 
         x_start, y_start = points[0]
@@ -175,12 +168,7 @@ def converter_svg_para_gcode(svg_path, output_path=None):
 
 def executar_cnc(gcode_path, porta=PORTA_PADRAO, baudrate=BAUDRATE_PADRAO,
                  timeout=5, relatorio=True):
-    """
-    FUNÇÃO 2: envia G-code para a CNC GRBL pela serial.
-
-    Exemplo:
-        executar_cnc("desenho.gcode")  # COM18, 115200 baud
-    """
+    """Envia o arquivo G-code para a CNC via porta Serial."""
     gcode_path = Path(gcode_path)
     if not gcode_path.is_file():
         raise FileNotFoundError(f"Não encontrei o G-code: {gcode_path}")
@@ -206,7 +194,6 @@ def executar_cnc(gcode_path, porta=PORTA_PADRAO, baudrate=BAUDRATE_PADRAO,
         timeout=timeout,
         write_timeout=timeout,
     ) as cnc:
-        # A placa GRBL pode reiniciar quando a serial abre.
         time.sleep(2)
         cnc.reset_input_buffer()
 
@@ -221,9 +208,7 @@ def executar_cnc(gcode_path, porta=PORTA_PADRAO, baudrate=BAUDRATE_PADRAO,
             recebeu_ok = False
 
             while time.monotonic() - inicio < timeout:
-                resposta = cnc.readline().decode(
-                    "ascii", errors="replace"
-                ).strip()
+                resposta = cnc.readline().decode("ascii", errors="replace").strip()
 
                 if resposta == "ok":
                     recebeu_ok = True
@@ -244,12 +229,4 @@ def executar_cnc(gcode_path, porta=PORTA_PADRAO, baudrate=BAUDRATE_PADRAO,
                 print(f"{numero}/{len(comandos)} comandos enviados")
 
     if relatorio:
-        print("Envio concluído.")
-
-
-if __name__ == "__main__":
-    print("Módulo SVG -> G-code -> CNC")
-    print("Importe as funções converter_svg_para_gcode() e executar_cnc()")
-    print("Exemplo:")
-    print('  gcode = converter_svg_para_gcode("desenho.svg")')
-    print("  executar_cnc(gcode)  # usa COM18")
+        print("Envio para a CNC concluído.")

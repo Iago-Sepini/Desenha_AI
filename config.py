@@ -17,7 +17,7 @@ PIPER_SENTENCE_SILENCE = 0.1
 # Vazio = usa o padrão do sistema. Aceita o índice (ex.: 14) ou parte do nome
 # do aparelho (ex.: QCY), que é mais estável porque o índice muda quando se
 # liga ou desliga um dispositivo. Use /mics no programa para ver a lista.
-MIC_DEVICE = os.getenv("MIC_DEVICE", "")
+MIC_DEVICE = os.getenv("MIC_DEVICE", "WEB CAM")
 
 # --- IA (Groq) ---
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")

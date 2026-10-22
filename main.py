@@ -1,6 +1,10 @@
 # main.py
 import os
+import subprocess
+import sys
 import threading
+import time
+from pathlib import Path
 
 import config
 from ai.llm import GroqLLM
@@ -15,12 +19,20 @@ from vision.watcher import DrawingWatcher
 from voice.listener import Listener, listar_microfones, nome_do_microfone
 from voice.speaker import Speaker
 from voice.tts import PiperTTS
+from server.state import FALANDO, PARADO, PENSANDO, State
+
+# Caminho do script de retrato (fica na pasta "tests", ao lado do main.py)
+SCRIPT_RETRATO = Path(__file__).parent / "tests" / "captura_e_gcode.py"
 
 AJUDA = """
 Digite o que o visitante diria (ex.: oi, quem é você, sim, não).
 Modos de Jogo:
   /modo livre        ativa o modo livre (sem tempo limite)
   /desafio           inicia o desafio rápido (30s para desenhar um item sorteado)
+
+Retrato:
+  imprimir           tira um retrato com a webcam e desenha na CNC
+                     (também funciona por voz: diga "imprimir")
 
 Simulações:
   /desenho <nome>    simula a visão identificando um desenho (ex.: /desenho casa)
@@ -53,6 +65,15 @@ FRASES_PRONTO = (
     "pode olhar",
     "coloquei",
 )
+def eh_pedido_imprimir(texto: str) -> bool:
+    """True só para pedidos curtos como 'imprimir' ou 'imprimir retrato'.
+
+    Frases longas (como a fala do próprio Max dizendo "vou imprimir seu
+    desenho", captada pelo microfone) NÃO disparam o retrato.
+    """
+    palavras = texto.lower().strip().split()
+    return 0 < len(palavras) <= 3 and any(p.startswith("imprim") for p in palavras)
+
 
 def main():
     state = State()
@@ -70,6 +91,9 @@ def main():
     llm = GroqLLM()
 
     trava = threading.RLock()
+
+    # Evita abrir dois retratos ao mesmo tempo
+    retrato_em_andamento = threading.Event()
 
     # Callback de atalho para conversas diretas
     def conversar(mensagem: str):
@@ -96,6 +120,50 @@ def main():
         conversar_fn=conversar,
         speaker=speaker,
     )
+
+    # ------------------------------------------------------------------
+    # RETRATO: executa captura_e_gcode.py como processo separado
+    # ------------------------------------------------------------------
+    def iniciar_retrato():
+        if retrato_em_andamento.is_set():
+            print("[retrato] já existe um retrato em andamento.")
+            return
+
+        if not SCRIPT_RETRATO.exists():
+            print(f"[retrato] script não encontrado: {SCRIPT_RETRATO}")
+            return
+
+        def trabalhar():
+            nonlocal watcher
+            retrato_em_andamento.set()
+            try:
+                speaker.cancel()
+                speaker.say("Certo! Vou abrir a câmera para o seu retrato. "
+                            "Aperte espaço para tirar a foto.")
+                speaker.wait()
+
+                # Libera a webcam para o outro script
+                watcher.stop()
+                time.sleep(1.0)  # dá tempo de a câmera ser liberada pelo sistema
+
+                print("[retrato] executando captura_e_gcode.py ...")
+                subprocess.run([sys.executable, str(SCRIPT_RETRATO)], check=False)
+                print("[retrato] script finalizado.")
+            except Exception as e:
+                print(f"[retrato] erro: {e}")
+            finally:
+                # Religa a visão (novo objeto, pois o anterior foi parado)
+                try:
+                    watcher = DrawingWatcher(on_desenho=ao_detectar_desenho)
+                    if hasattr(game_manager, "watcher"):
+                        game_manager.watcher = watcher
+                    watcher.start()
+                except Exception as e:
+                    print(f"[retrato] erro ao religar a visão: {e}")
+                game_manager.limpar_estado()
+                retrato_em_andamento.clear()
+
+        threading.Thread(target=trabalhar, daemon=True).start()
 
     def responder(gerar):
         with trava:
@@ -154,10 +222,16 @@ def main():
     def comando_voz(texto: str):
         txt = texto.lower().strip()
 
+        # Durante o retrato o Max não deve reagir a nada (nem à própria voz)
+        if retrato_em_andamento.is_set():
+            return
+
         if txt == "parar":
             speaker.pause()
         elif txt == "continuar":
             speaker.resume()
+        elif eh_pedido_imprimir(txt):
+            iniciar_retrato()
         elif state.aguardando_posicionamento and any(f in txt for f in FRASES_PRONTO):
             game_manager.confirmar_e_analisar(responder)
         elif any(f in txt for f in FRASES_DESAFIO):
@@ -199,6 +273,8 @@ def main():
 
                 if baixo == "sair":
                     break
+                elif eh_pedido_imprimir(baixo):
+                    iniciar_retrato()   # nunca chega na IA
                 elif baixo in ("parar", "continuar"):
                     comando_voz(baixo)
                 elif baixo == "/modo livre":

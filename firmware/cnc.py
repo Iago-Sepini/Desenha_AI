@@ -31,7 +31,7 @@ F_DRAW = 100
 F_TRAVEL = 200
 
 SAMPLE_MM = 0.35
-PORTA_PADRAO = "COM18"
+PORTA_PADRAO = "COM20"
 BAUDRATE_PADRAO = 115200
 
 
@@ -167,7 +167,7 @@ def converter_svg_para_gcode(svg_path, output_path=None):
 
 
 def executar_cnc(gcode_path, porta=PORTA_PADRAO, baudrate=BAUDRATE_PADRAO,
-                 timeout=5, relatorio=True):
+                 timeout=20, relatorio=True):
     """Envia o arquivo G-code para a CNC via porta Serial."""
     gcode_path = Path(gcode_path)
     if not gcode_path.is_file():

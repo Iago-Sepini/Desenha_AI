@@ -147,7 +147,9 @@ class Face:
         tamanho_img = (round(img_l * escala), round(img_a * escala))
         self._posicao = ((largura - tamanho_img[0]) // 2, (altura - tamanho_img[1]) // 2)
         self._imagens = {
-            nome: pygame.transform.smoothscale(img, tamanho_img)
+            nome: pygame.transform.rotate(
+                pygame.transform.smoothscale(img, tamanho_img), 180
+            )
             for nome, img in self._originais.items()
         }
 

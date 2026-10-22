@@ -88,7 +88,7 @@ def extrair_linhas_rosto(frame):
         # Simplifica o traço mantendo as linhas firmes
         approx = cv2.approxPolyDP(c, 1.8, False)
         pts = approx.reshape(-1, 2)
-        
+
         if len(pts) >= 2:
             traços_finais.append(pts)
 
@@ -283,29 +283,37 @@ def main():
 
         # Exibe a imagem processada em preto e branco
         cv2.imshow("Pre-visualizacao (Preto e Branco)", visao_preto_branco)
-        cv2.waitKey(1)
-
-        # Pergunta ao operador o que deseja fazer
         print("\n" + "-" * 50)
-        opcao = input("Deseja imprimir esta imagem na CNC? ([S]im / [N]ovamente para tentar outra foto): ").strip().lower()
+        print("[TECLAS] S = imprimir na CNC | N = tirar outra foto | Q = sair")
         print("-" * 50)
+
+        # Pergunta ao operador pela própria janela do OpenCV (sem input(),
+        # para não competir com o console do main.py)
+        while True:
+            k = cv2.waitKey(0) & 0xFF
+            if k in (ord('s'), 13):  # S ou Enter
+                opcao = 's'
+                break
+            elif k == ord('n'):
+                opcao = 'n'
+                break
+            elif k == ord('q'):
+                print("Encerrado pelo usuário.")
+                cap.release()
+                cv2.destroyAllWindows()
+                sys.exit(0)
 
         cv2.destroyAllWindows()
 
-        if opcao in ['s', 'sim', '']:
+        if opcao == 's':
             try:
                 # Gera o G-code em 'img.gcode' e envia para a CNC
                 gcode_file = gerar_gcode_direto(tracos, img_size=(400, 400), arquivo_saida="img.gcode")
                 enviar_gcode_cnc(gcode_file)
-                
-                # Pergunta se quer tirar outra foto após terminar o desenho
-                repetir = input("\nDeseja tirar outra foto para um novo desenho? ([S]im / [N]ão): ").strip().lower()
-                if repetir not in ['s', 'sim', '']:
-                    print("Encerrado.")
-                    break
             except Exception as e:
                 print(f"\n[ERRO CRÍTICO]: {e}")
-                break
+            # Termina após imprimir: o controle volta para o main.py (Max)
+            break
         else:
             print("\n[INFO] Descartando foto. Retornando para nova captura...\n")
             continue

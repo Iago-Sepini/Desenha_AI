@@ -16,22 +16,22 @@ from svgpathtools import svg2paths2
 
 
 # ---------------- CONFIGURAÇÃO DA CNC ----------------
-MAX_X = 16.0
-MAX_Y = 24.0
+MAX_X = 11.0
+MAX_Y = 19.0
 
-DRAW_W = 14.0
-DRAW_H = 21.0
+DRAW_W = 9.0
+DRAW_H = 16.0
 MARGIN_X = 1.0
 MARGIN_Y = 1.5
 
 Z_UP = 0.0
-Z_DOWN = 20.0
+Z_DOWN = 15.0
 
 F_DRAW = 100
 F_TRAVEL = 200
 
 SAMPLE_MM = 0.35
-PORTA_PADRAO = "COM20"
+PORTA_PADRAO = "COM4"
 BAUDRATE_PADRAO = 115200
 
 
@@ -155,6 +155,9 @@ def converter_svg_para_gcode(svg_path, output_path=None):
 
         lines.append(f"G0 Z{Z_UP:.3f}")
 
+    # terminou: caneta para cima e volta para a origem (X0 Y0 Z0) da máquina
+    lines.append(f"G0 Z{Z_UP:.3f}")
+    lines.append(f"G0 X0 Y0 F{F_TRAVEL}")
     lines.append("M2")
 
     if output_path is None:

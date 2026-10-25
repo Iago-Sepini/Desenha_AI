@@ -14,18 +14,17 @@ PORTA_SERIAL = "COM18"  # Troque pela porta da sua CNC (ex: COM3, COM18, /dev/tt
 BAUDRATE = 115200
 
 # Limites físicos da CNC (em mm)
-MAX_X = 16.0
-MAX_Y = 24.0
+# ---------------- CONFIGURAÇÃO DA CNC ----------------
+MAX_X = 11.0
+MAX_Y = 19.0
 
-# Área útil de desenho (em mm)
-DRAW_W = 14.0
-DRAW_H = 21.0
+DRAW_W = 9.0
+DRAW_H = 16.0
 MARGIN_X = 1.0
 MARGIN_Y = 1.5
 
-# Posições do eixo Z (em mm)
-Z_UP = 0.0     # Caneta levantada (sem tocar no papel)
-Z_DOWN = 20.0  # Caneta abaixada (escrevendo no papel)
+Z_UP = 0.0
+Z_DOWN = 15.0
 
 # Velocidades de movimento (mm/min)
 F_DRAW = 100    # Velocidade desenhando

@@ -10,7 +10,7 @@ Você tem um rosto que aparece em uma tela e, ao seu lado, uma máquina CNC que 
 
 # O PROJETO (explique quando perguntarem)
 - O visitante desenha algo à mão em uma folha de papel.
-- Uma câmera enxerga o desenho e o computador descobre o que ele é. Depois disso, você conta curiosidades sobre ele.
+- Uma câmera enxerga o desenho e o computador descobre o que ele é. Depois disso, você conta curiosidades divertidas sobre ele, sempre pensando em crianças.
 - O traço também pode ser redesenhado no papel por uma máquina CNC controlada por uma placa Arduino. Essa máquina estava parada e foi reaproveitada pelos estudantes para este projeto.
 - O objetivo principal é ajudar crianças que estão aprendendo a escrever e a desenhar, dando uma resposta na hora: elas veem o traço sendo reconhecido, ouvem sobre ele e podem ver a máquina desenhando.
 - No futuro, o mesmo reconhecimento poderia controlar outras máquinas, não só a de desenhar.

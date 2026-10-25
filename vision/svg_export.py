@@ -2,6 +2,11 @@
 """
 Contornos -> SVG de LINHA ÚNICA (centro do traço) para a CNC desenhar.
 
+Por que não saía linha única antes:
+  cv2.findContours num esqueleto de 1 pixel contorna a linha pelos DOIS lados (vai e volta),
+  então cada traço virava um laço duplo. Aqui o esqueleto é percorrido pixel a pixel
+  (uma vez só), sem findContours.
+
 Pipeline:
   contornos -> máscara de tinta -> esqueleto (centro do traço) -> caminhos (1 passada)
   -> poda de rebarbas -> simplifica -> ordena (menos deslocamento da caneta) -> SVG
@@ -17,6 +22,8 @@ COMPRIMENTO_MIN = 4     # caminhos ligados ao desenho menores que isso (px) são
 PODA_RAMO = 6           # ramos soltos curtos (px) saindo de um traço = ruído do esqueleto
 EPSILON = 0.7           # simplificação dos caminhos (px); maior = menos pontos, CNC mais rápida
 ESPESSURA = 2           # espessura padrão do traço no SVG (só se não der para medir)
+BOLA_FATOR = 1.7        # só vira bola o que for 1,7x mais grosso que o traço (e redondo)
+PODA_FATOR = 2.2        # rebarbas menores que 2,2x a meia-espessura do traço são apagadas
 TAM_PONTO = 1.5         # meia-largura (px) do risquinho que representa um ponto (olho etc.)
 
 _VIZ = [(-1, 0), (0, -1), (0, 1), (1, 0), (-1, -1), (-1, 1), (1, -1), (1, 1)]  # 4-vizinhos primeiro
@@ -121,6 +128,42 @@ def _percorrer(skel):
     return caminhos, fechados, soltos
 
 
+_ANEL = [(-1, -1), (-1, 0), (-1, 1), (0, 1), (1, 1), (1, 0), (1, -1), (0, -1)]
+
+
+def _nviz(p, pix):
+    """Quantos vizinhos o pixel tem (1 = ponta, 2 = meio de traço, 3+ = cruzamento)."""
+    return sum(((p[0] + dy, p[1] + dx) in pix) for dy, dx in _ANEL)
+
+
+def _podar(skel, limite):
+    """Apaga rebarbas: ramos curtos que vão de uma ponta até um cruzamento (ruído da borda do traço)."""
+    ys, xs = np.nonzero(skel)
+    pix = set(zip(ys.tolist(), xs.tolist()))
+    for _ in range(3):
+        for p in [q for q in pix if _nviz(q, pix) == 1]:
+            if p not in pix:
+                continue
+            ramo, atual, ant = [p], p, None
+            while len(ramo) <= limite:
+                livres = [(atual[0] + dy, atual[1] + dx) for dy, dx in _ANEL
+                          if (atual[0] + dy, atual[1] + dx) in pix
+                          and (atual[0] + dy, atual[1] + dx) != ant
+                          and (atual[0] + dy, atual[1] + dx) not in ramo]
+                if not livres:
+                    break                                   # traço solto: não é rebarba
+                prox = livres[0]
+                if _nviz(prox, pix) >= 3:                 # chegou num cruzamento: era rebarba
+                    pix -= set(ramo)
+                    break
+                ant, atual = atual, prox
+                ramo.append(prox)
+    out = np.zeros_like(skel)
+    for y, x in pix:
+        out[y, x] = 255
+    return out
+
+
 def _comprimento(pts, fechado):
     seg = np.linalg.norm(np.diff(pts, axis=0), axis=1).sum() if len(pts) > 1 else 0.0
     return seg + (np.linalg.norm(pts[0] - pts[-1]) if fechado and len(pts) > 1 else 0.0)
@@ -156,32 +199,30 @@ def extrair_tracos(contornos, tamanho=300):
     raio = float(np.median(dist[sk0])) if sk0.any() else 1.0
     raio = max(raio, 1.0)
 
-    # "bolas" (maçaneta, olho, miolo cheio): partes mais grossas que o traço
-    d_bola = int(round(raio * 2 * 1.8)) | 1
-    bolas = cv2.morphologyEx(tinta, cv2.MORPH_OPEN,
-                             cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (d_bola, d_bola)))
+    # "bolas" (maçaneta, olho): manchas REDONDAS bem mais grossas que o traço.
+    # Quinas e cruzamentos engrossam pouco (~1,4x) e são compridos, então não entram aqui.
+    semente = (dist >= raio * BOLA_FATOR).astype(np.uint8)
     tracos = []
-    n_cc, rot = cv2.connectedComponents(bolas)
+    bolas = np.zeros_like(tinta)
+    n_cc, rot, st, cen = cv2.connectedComponentsWithStats(semente)[:4]
     for i in range(1, n_cc):
-        comp = (rot == i).astype(np.uint8) * 255
-        k = int(round(raio))
-        nucleo = cv2.erode(comp, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * k + 1, 2 * k + 1)))
-        cs, _ = cv2.findContours(nucleo if nucleo.any() else comp, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
-        if not cs:
+        comp = rot == i
+        dm = float(dist[comp].max())                       # raio da bola
+        w_, h_ = st[i, cv2.CC_STAT_WIDTH], st[i, cv2.CC_STAT_HEIGHT]
+        if max(w_, h_) > 2.0 * dm:                          # comprido = parte grossa do traço
             continue
-        c = max(cs, key=cv2.contourArea)
-        pts = c.reshape(-1, 2).astype(np.float32)
-        if len(pts) >= 6:                              # contorno fechado da bola
-            s = cv2.approxPolyDP(pts.reshape(-1, 1, 2), EPSILON, True).reshape(-1, 2).astype(float)
-            if len(s) >= 3:
-                tracos.append((s, True))
-                continue
-        cx = pts.mean(axis=0)                           # bola minúscula: um ponto
-        tracos.append((np.array([cx - [TAM_PONTO, 0], cx + [TAM_PONTO, 0]], float), False))
+        cx, cy = cen[i]
+        cv2.circle(bolas, (int(round(cx)), int(round(cy))), int(np.ceil(dm * 1.15)), 255, -1)
+        rc = max(dm - raio, 0.0)
+        if rc >= 1.5:
+            ang = np.linspace(0, 2 * np.pi, 16, endpoint=False)
+            tracos.append((np.c_[cx + rc * np.cos(ang), cy + rc * np.sin(ang)], True))
+        else:
+            tracos.append((np.array([[cx - TAM_PONTO, cy], [cx + TAM_PONTO, cy]]), False))
 
     # traços finos: o que sobra tirando as bolas -> esqueleto -> caminhos
     finos = cv2.bitwise_and(tinta, cv2.bitwise_not(bolas))
-    caminhos, fechados, soltos = _percorrer(esqueletizar(finos))
+    caminhos, fechados, soltos = _percorrer(_podar(esqueletizar(finos), int(max(PODA_RAMO, raio * PODA_FATOR))))
     for pts, fechado, solto in zip(caminhos, fechados, soltos):
         comp = _comprimento(pts, fechado)
         if solto and comp < COMPRIMENTO_MIN:

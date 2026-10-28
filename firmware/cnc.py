@@ -16,22 +16,23 @@ from svgpathtools import svg2paths2
 
 
 # ---------------- CONFIGURAÇÃO DA CNC ----------------
-MAX_X = 11.0
-MAX_Y = 19.0
+MAX_X = 15.0
+MAX_Y = 22.0
 
-DRAW_W = 9.0
+DRAW_W = 11.0
 DRAW_H = 16.0
 MARGIN_X = 1.0
 MARGIN_Y = 1.5
 
 Z_UP = 0.0
-Z_DOWN = 15.0
+Z_DOWN = 10.0
+MAX_Z = 10.0
 
 F_DRAW = 100
 F_TRAVEL = 200
 
 SAMPLE_MM = 0.35
-PORTA_PADRAO = "COM4"
+PORTA_PADRAO = "COM20"
 BAUDRATE_PADRAO = 115200
 
 
@@ -94,6 +95,11 @@ def converter_svg_para_gcode(svg_path, output_path=None):
     if not paths_validos:
         raise ValueError("O SVG não contém caminhos (<path>) válidos para desenhar.")
 
+    # as constantes têm que caber na máquina (evita erro de digitação em MARGIN/DRAW/Z)
+    if (2 * MARGIN_X + DRAW_W > MAX_X + 1e-9 or 2 * MARGIN_Y + DRAW_H > MAX_Y + 1e-9
+            or not (0 <= Z_UP <= MAX_Z) or not (0 <= Z_DOWN <= MAX_Z)):
+        raise ValueError("Configuração da CNC inconsistente: área de desenho, margens ou Z passam do limite.")
+
     xmin, xmax, ymin, ymax = _limites_dos_caminhos(paths_validos)
     width = xmax - xmin
     height = ymax - ymin
@@ -101,7 +107,7 @@ def converter_svg_para_gcode(svg_path, output_path=None):
     if width <= 0 or height <= 0:
         raise ValueError("O desenho SVG tem largura ou altura inválida.")
 
-    # Escala e centralização na área útil de 14x21mm
+    # Escala e centralização na área útil
     scale = min(DRAW_W / width, DRAW_H / height)
     drawn_w = width * scale
     drawn_h = height * scale
@@ -116,14 +122,15 @@ def converter_svg_para_gcode(svg_path, output_path=None):
 
     lines = [
         "; SVG para G-code - cnc.py",
-        "; Limites fisicos: X16 mm, Y24 mm",
-        "; Area do desenho: 14 x 21 mm",
-        "; Z0 = caneta levantada; Z20 = caneta abaixada",
+        f"; Limites fisicos: X{MAX_X:g} mm, Y{MAX_Y:g} mm, Z{MAX_Z:g} mm",
+        f"; Area do desenho: {DRAW_W:g} x {DRAW_H:g} mm",
+        f"; Z{Z_UP:g} = caneta levantada; Z{Z_DOWN:g} = caneta abaixada",
+        "; Origem X0 Y0 Z0 = onde a maquina estava ao ser ligada/resetada",
         "G21",
         "G90",
         "G17",
         "G94",
-        f"G0 Z{Z_UP:.3f}",
+        f"G0 Z{Z_UP:.3f}"
     ]
 
     for path in paths_validos:
@@ -169,8 +176,42 @@ def converter_svg_para_gcode(svg_path, output_path=None):
     return str(output_path)
 
 
+def _status(cnc):
+    """Pergunta '?' ao GRBL e devolve a linha de status (ex.: <Idle|MPos:0,0,0|...>) ou ''."""
+    cnc.write(b"?")
+    cnc.flush()
+    fim = time.monotonic() + 3
+    while time.monotonic() < fim:
+        r = cnc.readline().decode("ascii", errors="replace").strip()
+        if r.startswith("<"):
+            return r
+    return ""
+
+
+def _esperar_parada(cnc, limite=300):
+    """Espera o GRBL terminar TODOS os movimentos (status Idle) antes de fechar a porta."""
+    fim = time.monotonic() + limite
+    while time.monotonic() < fim:
+        st = _status(cnc)
+        if st.startswith("<Idle"):
+            return True
+        if st.startswith("<Alarm"):
+            raise RuntimeError(f"GRBL entrou em alarme durante o desenho: {st}")
+        time.sleep(0.3)
+    return False
+
+
+def _recolher(cnc):
+    """Em caso de erro: tenta levantar a caneta e voltar à origem (melhor esforço)."""
+    try:
+        cnc.write(f"G0 Z{Z_UP:.3f}\nG0 X0 Y0\n".encode("ascii"))
+        cnc.flush()
+    except Exception:
+        pass
+
+
 def executar_cnc(gcode_path, porta=PORTA_PADRAO, baudrate=BAUDRATE_PADRAO,
-                 timeout=20, relatorio=True):
+                 timeout=39, relatorio=True):
     """Envia o arquivo G-code para a CNC via porta Serial."""
     gcode_path = Path(gcode_path)
     if not gcode_path.is_file():
@@ -200,36 +241,52 @@ def executar_cnc(gcode_path, porta=PORTA_PADRAO, baudrate=BAUDRATE_PADRAO,
         time.sleep(2)
         cnc.reset_input_buffer()
 
+        st = _status(cnc)
+        if relatorio:
+            print(f"Estado inicial da CNC: {st or 'sem resposta'}")
+        if not st:
+            raise RuntimeError("A CNC não respondeu ao status. Confira a porta, o cabo e se o GRBL está ligado.")
+        if st.startswith("<Alarm"):
+            raise RuntimeError("A CNC está em ALARME. Destrave ($X) ou faça o home ($H) antes de desenhar.")
+
         if relatorio:
             print(f"Enviando {len(comandos)} comandos...")
 
-        for numero, comando in enumerate(comandos, start=1):
-            cnc.write((comando + "\n").encode("ascii"))
-            cnc.flush()
+        try:
+            for numero, comando in enumerate(comandos, start=1):
+                cnc.write((comando + "\n").encode("ascii"))
+                cnc.flush()
 
-            inicio = time.monotonic()
-            recebeu_ok = False
+                inicio = time.monotonic()
+                recebeu_ok = False
 
-            while time.monotonic() - inicio < timeout:
-                resposta = cnc.readline().decode("ascii", errors="replace").strip()
+                while time.monotonic() - inicio < timeout:
+                    resposta = cnc.readline().decode("ascii", errors="replace").strip()
 
-                if resposta == "ok":
-                    recebeu_ok = True
-                    break
+                    if resposta == "ok":
+                        recebeu_ok = True
+                        break
 
-                if resposta.startswith("error") or resposta.startswith("ALARM"):
-                    raise RuntimeError(
-                        f"GRBL respondeu '{resposta}' ao comando: {comando}"
+                    if resposta.startswith("error") or resposta.startswith("ALARM"):
+                        raise RuntimeError(
+                            f"GRBL respondeu '{resposta}' ao comando: {comando}"
+                        )
+
+                if not recebeu_ok:
+                    raise TimeoutError(
+                        f"Sem resposta para o comando: {comando}. "
+                        "O envio foi interrompido."
                     )
 
-            if not recebeu_ok:
-                raise TimeoutError(
-                    f"Sem resposta para o comando: {comando}. "
-                    "O envio foi interrompido."
-                )
+                if relatorio and (numero % 25 == 0 or numero == len(comandos)):
+                    print(f"{numero}/{len(comandos)} comandos enviados")
 
-            if relatorio and (numero % 25 == 0 or numero == len(comandos)):
-                print(f"{numero}/{len(comandos)} comandos enviados")
+            # todos os comandos foram aceitos; espera a máquina realmente parar (inclui o retorno à origem)
+            if not _esperar_parada(cnc):
+                raise TimeoutError("A CNC não ficou parada (Idle) a tempo depois do desenho.")
+        except Exception:
+            _recolher(cnc)          # caneta para cima e volta à origem, se ainda der
+            raise
 
     if relatorio:
-        print("Envio para a CNC concluído.")
+        print("Desenho terminado e CNC parada na origem (X0 Y0 Z0).")

@@ -35,7 +35,7 @@ ARQUIVO_CONFIG = "camera_config.json"
 MODOS_VISAO = ("normal", "pb", "ambos")
 
 PADRAO = {
-    "indice": 0,              # número da câmera (0 = primeira, 1 = segunda...)
+    "indice": 1,              # número da câmera (0 = primeira, 1 = segunda...)
     "largura": 640,           # resolução pedida à câmera (640x480 = bem mais rápido que 1280x720)
     "altura": 480,
     "espelhar": False,        # inverte esquerda/direita

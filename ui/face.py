@@ -219,49 +219,56 @@ class Face:
         if not self.state:
             return
 
-        largura_tela, _ = self.tamanho
+        largura_tela, altura_tela = self.tamanho
 
-        # 1. MODO DESAFIO COM O TEMPO ROLANDO (texto e faixa 20% menores)
-        if self.state.modo == MODO_DESAFIO and self.state.desafio_em_andamento:
+        # 1. MODO DESAFIO: mostra a faixa assim que o desafio é acionado
+        if self.state.modo == MODO_DESAFIO and self.state.tempo_restante > 0:
             tempo = self.state.tempo_restante
             palavra = self.state.palavra_sorteada or ""
 
             e = ESCALA_TEXTO_DESAFIO
             altura_faixa = round(140 * e)
 
+            # Criamos a superfície para desenhar o texto e a barra
             overlay_surface = pygame.Surface((largura_tela, altura_faixa), pygame.SRCALPHA)
             overlay_surface.fill((10, 20, 45, 210))
-            self.tela.blit(overlay_surface, (0, 0))
 
             cor_tempo = (255, 60, 60) if tempo <= 5 else (0, 220, 255)
             pygame.draw.line(
-                self.tela, cor_tempo, (0, altura_faixa), (largura_tela, altura_faixa), width=4
+                overlay_surface, cor_tempo, (0, altura_faixa - 4), (largura_tela, altura_faixa - 4), width=4
             )
 
             # Cronômetro Ex: 00:25
             txt_tempo = self.fonte_timer.render(f"00:{tempo:02d}", True, cor_tempo)
             rect_tempo = txt_tempo.get_rect(center=(largura_tela // 2, round(45 * e)))
-            self.tela.blit(txt_tempo, rect_tempo)
+            overlay_surface.blit(txt_tempo, rect_tempo)
 
             # Instrução Ex: DESENHE: CASA
             txt_palavra = self.fonte_desafio.render(
                 f"DESENHE UM(A): {palavra.upper()}", True, (255, 255, 255)
             )
             rect_palavra = txt_palavra.get_rect(center=(largura_tela // 2, round(105 * e)))
-            self.tela.blit(txt_palavra, rect_palavra)
+            overlay_surface.blit(txt_palavra, rect_palavra)
+
+            # Rotaciona o overlay em 180° e posiciona na base da tela lógica
+            overlay_rotacionado = pygame.transform.rotate(overlay_surface, 180)
+            self.tela.blit(overlay_rotacionado, (0, altura_tela - altura_faixa))
 
         # 2. TEMPO ACABOU: AVISO PARA COLOCAR O PAPEL NA CÂMERA
         elif self.state.aguardando_posicionamento:
-            overlay_surface = pygame.Surface((largura_tela, 120), pygame.SRCALPHA)
+            altura_faixa = 120
+            overlay_surface = pygame.Surface((largura_tela, altura_faixa), pygame.SRCALPHA)
             overlay_surface.fill((180, 40, 40, 220))
-            self.tela.blit(overlay_surface, (0, 0))
 
             txt_alerta = self.fonte_alerta.render(
                 "COLOQUE O PAPEL DEBAIXO DA CÂMERA E AVISE!", True, (255, 255, 255)
             )
             rect_alerta = txt_alerta.get_rect(center=(largura_tela // 2, 60))
-            self.tela.blit(txt_alerta, rect_alerta)
+            overlay_surface.blit(txt_alerta, rect_alerta)
 
+            # Rotaciona o overlay em 180° e posiciona na base da tela lógica
+            overlay_rotacionado = pygame.transform.rotate(overlay_surface, 180)
+            self.tela.blit(overlay_rotacionado, (0, altura_tela - altura_faixa))
 
 if __name__ == "__main__":
     face = Face(display_index=1)

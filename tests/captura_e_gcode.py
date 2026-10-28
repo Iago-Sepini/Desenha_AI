@@ -10,21 +10,21 @@ import serial
 # ==============================================================================
 # CONFIGURAÇÕES DA CNC E DA ÁREA DE DESENHO
 # ==============================================================================
-PORTA_SERIAL = "COM18"  # Troque pela porta da sua CNC (ex: COM3, COM18, /dev/ttyUSB0)
+PORTA_SERIAL = "COM20"  # Troque pela porta da sua CNC (ex: COM3, COM18, /dev/ttyUSB0)
 BAUDRATE = 115200
 
 # Limites físicos da CNC (em mm)
 # ---------------- CONFIGURAÇÃO DA CNC ----------------
-MAX_X = 11.0
-MAX_Y = 19.0
+MAX_X = 13.0
+MAX_Y = 21.0
 
-DRAW_W = 9.0
-DRAW_H = 16.0
+DRAW_W = 11.0
+DRAW_H = 18.0
 MARGIN_X = 1.0
 MARGIN_Y = 1.5
 
 Z_UP = 0.0
-Z_DOWN = 15.0
+Z_DOWN = 10.0
 
 # Velocidades de movimento (mm/min)
 F_DRAW = 100    # Velocidade desenhando

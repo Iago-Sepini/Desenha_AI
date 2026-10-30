@@ -1,3 +1,8 @@
+"""
+tests/captura_e_gcode.py — Script independente de captura por webcam com
+opção de escolha entre modo Rosto (Retrato) ou modo Desenho (com limpeza de ruídos).
+"""
+
 import os
 import sys
 import time
@@ -10,81 +15,105 @@ import serial
 # ==============================================================================
 # CONFIGURAÇÕES DA CNC E DA ÁREA DE DESENHO
 # ==============================================================================
-PORTA_SERIAL = "COM20"  # Troque pela porta da sua CNC (ex: COM3, COM18, /dev/ttyUSB0)
+PORTA_SERIAL = "COM20"
 BAUDRATE = 115200
 
-# Limites físicos da CNC (em mm)
-# ---------------- CONFIGURAÇÃO DA CNC ----------------
-MAX_X = 13.0
-MAX_Y = 21.0
+MAX_X = 9.0
+MAX_Y = 16.0
 
-DRAW_W = 11.0
-DRAW_H = 18.0
+DRAW_W = 5.0
+DRAW_H = 10.0
 MARGIN_X = 1.0
 MARGIN_Y = 1.5
 
 Z_UP = 0.0
 Z_DOWN = 10.0
+MAX_Z = 15.0
 
-# Velocidades de movimento (mm/min)
-F_DRAW = 100    # Velocidade desenhando
-F_TRAVEL = 200  # Velocidade com caneta no ar
+F_DRAW = 100
+F_TRAVEL = 200
 
-# Resolução de amostragem do traço (mm)
 SAMPLE_MM = 0.35
-COMPRIMENTO_MIN_TRAÇO = 1.5  # Ignora ruidinhos menores que 1.5 mm
+COMPRIMENTO_MIN_TRAÇO = 2.0  # Descarta ruidinhos curtos menores que 2 mm
 
 
 # ==============================================================================
-# 1. PROCESSAMENTO DE IMAGEM PARA LINHAS DE ROSTO
+# 1. PROCESSAMENTO DE IMAGEM PARA ROSTO
 # ==============================================================================
 def extrair_linhas_rosto(frame):
-    """
-    Extrai os traços principais do rosto eliminando ruídos geométricos,
-    quadrados e triangulinhos indesejados no cabelo ou na pele.
-    """
-    # 1. Recorta um quadrado central da câmera
     h, w, _ = frame.shape
     lado = min(h, w)
     x0, y0 = (w - lado) // 2, (h - lado) // 2
     roi = frame[y0:y0 + lado, x0:x0 + lado]
 
-    # Redimensiona para uma resolução controlada
     roi = cv2.resize(roi, (400, 400), interpolation=cv2.INTER_AREA)
-
-    # 2. Converte para escala de cinzas
     gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
 
-    # 3. CLAHE para realçar olhos, boca e contornos faciais
     clahe = cv2.createCLAHE(clipLimit=2.5, tileGridSize=(8, 8))
     contraste = clahe.apply(gray)
 
-    # 4. Suavização para tirar texturas ásperas da pele
     blurred = cv2.GaussianBlur(contraste, (5, 5), 0)
+    edges = cv2.Canny(blurred, threshold1=60, threshold2=150)
 
-    # 5. Canny para detectar os traços
-    edges = cv2.Canny(blurred, threshold1=50, threshold2=140)
-
-    # 6. Limpeza morfológica para unir traços dos olhos e boca sem criar formas fechadas
-    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (2, 2))
+    # Limpeza morfológica para eliminar pontos isolados
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
     limpo = cv2.morphologyEx(edges, cv2.MORPH_CLOSE, kernel)
+    limpo = cv2.morphologyEx(limpo, cv2.MORPH_OPEN, kernel)
 
-    # 7. Extração de Contornos
     contornos, _ = cv2.findContours(limpo, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
 
     traços_finais = []
     for c in contornos:
-        # Calcula a área e o comprimento do contorno para filtrar "sujeiras"
         area = cv2.contourArea(c)
         perimetro = cv2.arcLength(c, True)
 
-        # REGRAS DE FILTRAGEM ANTI-RABISCOS:
-        # - Descarta contornos microscópicos (pontinhos e triangulinhos de ruído)
-        # - Descarta contornos muito pequenos com área fechada excessiva (quadrados)
-        if perimetro < 8.0 or area < 3.0:
+        if perimetro < 12.0 or area < 5.0:
             continue
 
-        # Simplifica o traço mantendo as linhas firmes
+        approx = cv2.approxPolyDP(c, 2.0, False)
+        pts = approx.reshape(-1, 2)
+
+        if len(pts) >= 2:
+            traços_finais.append(pts)
+
+    return roi, limpo, traços_finais
+
+
+# ==============================================================================
+# 2. PROCESSAMENTO DE IMAGEM PARA DESENHO (Com remoção agressiva de fundo)
+# ==============================================================================
+def extrair_linhas_desenho(frame):
+    h, w, _ = frame.shape
+    lado = min(h, w)
+    x0, y0 = (w - lado) // 2, (h - lado) // 2
+    roi = frame[y0:y0 + lado, x0:x0 + lado]
+
+    roi = cv2.resize(roi, (400, 400), interpolation=cv2.INTER_AREA)
+    gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
+
+    blurred = cv2.GaussianBlur(gray, (5, 5), 0)
+    
+    thresh = cv2.adaptiveThreshold(
+        blurred, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+        cv2.THRESH_BINARY_INV, 15, 6
+    )
+
+    kernel_close = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
+    kernel_open = cv2.getStructuringElement(cv2.MORPH_RECT, (2, 2))
+    
+    limpo = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel_close)
+    limpo = cv2.morphologyEx(limpo, cv2.MORPH_OPEN, kernel_open)  # Apaga os pontinhos soltos
+
+    contornos, _ = cv2.findContours(limpo, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
+
+    traços_finais = []
+    for c in contornos:
+        area = cv2.contourArea(c)
+        perimetro = cv2.arcLength(c, True)
+
+        if perimetro < 10.0 or area < 4.0:
+            continue
+
         approx = cv2.approxPolyDP(c, 1.8, False)
         pts = approx.reshape(-1, 2)
 
@@ -95,19 +124,18 @@ def extrair_linhas_rosto(frame):
 
 
 # ==============================================================================
-# 2. GERAÇÃO DE G-CODE DIRETO (img.gcode)
+# 3. GERAÇÃO DE G-CODE DIRETO (Gravado em UTF-8)
 # ==============================================================================
 def gerar_gcode_direto(tracos, img_size=(400, 400), arquivo_saida="img.gcode"):
-    """
-    Converte diretamente as coordenadas de pixels da imagem em coordenadas mm
-    da CNC sem passar por arquivos SVG.
-    """
     if not tracos:
-        raise ValueError("Nenhum traço foi encontrado na imagem.")
+        raise ValueError("Nenhum traço válido foi encontrado após a limpeza.")
 
     w_img, h_img = img_size
 
-    # Calcula escala proporcional para a área de 14x21mm
+    if (2 * MARGIN_X + DRAW_W > MAX_X + 1e-9 or 2 * MARGIN_Y + DRAW_H > MAX_Y + 1e-9
+            or not (0 <= Z_UP <= MAX_Z) or not (0 <= Z_DOWN <= MAX_Z)):
+        raise ValueError("Configuração da CNC inconsistente: área de desenho, margens ou Z passam do limite.")
+
     scale = min(DRAW_W / w_img, DRAW_H / h_img)
     drawn_w = w_img * scale
     drawn_h = h_img * scale
@@ -116,20 +144,18 @@ def gerar_gcode_direto(tracos, img_size=(400, 400), arquivo_saida="img.gcode"):
     offset_y = MARGIN_Y + (DRAW_H - drawn_h) / 2.0
 
     def pixel_para_cnc(px, py):
-        # Mapeia X e inverte Y (coordenadas cartesianas da CNC)
         x = offset_x + (px * scale)
         y = offset_y + ((h_img - py) * scale)
         return x, y
 
     linhas_gcode = [
-        "; G-code gerado diretamente para CNC",
-        "; Limites fisicos: X16 mm, Y24 mm",
-        "; Area de desenho: 14 x 21 mm",
-        "G21",         # Unidades em milímetros
-        "G90",         # Posicionamento absoluto
-        "G17",         # Plano XY
-        "G94",         # Avanço em mm/min
-        f"G0 Z{Z_UP:.3f}"  # Garante caneta levantada
+        "; G-code gerado para CNC (sem ruídos)",
+        f"; Limites fisicos: X{MAX_X:g} mm, Y{MAX_Y:g} mm",
+        "G21",
+        "G90",
+        "G17",
+        "G94",
+        f"G0 Z{Z_UP:.3f}"
     ]
 
     total_tracos = 0
@@ -137,51 +163,60 @@ def gerar_gcode_direto(tracos, img_size=(400, 400), arquivo_saida="img.gcode"):
     for pts in tracos:
         pontos_mm = [pixel_para_cnc(x, y) for x, y in pts]
 
-        # Calcula o comprimento total do traço
         comp_total = 0.0
         for i in range(len(pontos_mm) - 1):
             p1, p2 = pontos_mm[i], pontos_mm[i + 1]
             comp_total += math.hypot(p2[0] - p1[0], p2[1] - p1[1])
 
-        # Descarta ruídos muito pequenos
         if comp_total < COMPRIMENTO_MIN_TRAÇO:
             continue
 
-        # Validação de segurança dos limites
         for x, y in pontos_mm:
-            if not (0 <= x <= MAX_X and 0 <= y <= MAX_Y):
-                raise ValueError(f"Ponto fora dos limites físicos da máquina: X{x:.2f} Y{y:.2f}")
+            if not (-1e-3 <= x <= MAX_X + 1e-3 and -1e-3 <= y <= MAX_Y + 1e-3):
+                raise ValueError(f"Ponto fora dos limites físicos: X{x:.2f} Y{y:.2f}")
 
-        # Início do traço
         x_start, y_start = pontos_mm[0]
         linhas_gcode.append(f"G0 Z{Z_UP:.3f}")
         linhas_gcode.append(f"G0 X{x_start:.3f} Y{y_start:.3f} F{F_TRAVEL}")
         linhas_gcode.append(f"G1 Z{Z_DOWN:.3f} F{F_DRAW}")
 
-        # Desenha os pontos subsequentes
         for x, y in pontos_mm[1:]:
             linhas_gcode.append(f"G1 X{x:.3f} Y{y:.3f} F{F_DRAW}")
 
         linhas_gcode.append(f"G0 Z{Z_UP:.3f}")
         total_tracos += 1
 
-    linhas_gcode.append("M2")  # Fim do programa
+    linhas_gcode.append(f"G0 Z{Z_UP:.3f}")
+    linhas_gcode.append(f"G0 X0 Y0 F{F_TRAVEL}")
+    linhas_gcode.append("M2")
 
-    Path(arquivo_saida).write_text("\n".join(linhas_gcode) + "\n", encoding="ascii")
-    print(f"[OK] G-code salvo em '{arquivo_saida}' ({total_tracos} traços válidos).")
+    # Correção da codificação UTF-8
+    Path(arquivo_saida).write_text("\n".join(linhas_gcode) + "\n", encoding="utf-8")
+    print(f"[OK] G-code salvo em '{arquivo_saida}' ({total_tracos} traços limpos).")
     return arquivo_saida
 
 
 # ==============================================================================
-# 3. ENVIO SERIAL PARA A CNC (GRBL)
+# 4. ENVIO SERIAL PARA A CNC (Lido em UTF-8)
 # ==============================================================================
+def _status(cnc):
+    cnc.write(b"?")
+    cnc.flush()
+    fim = time.monotonic() + 3
+    while time.monotonic() < fim:
+        r = cnc.readline().decode("utf-8", errors="replace").strip()
+        if r.startswith("<"):
+            return r
+    return ""
+
+
 def enviar_gcode_cnc(caminho_gcode, porta=PORTA_SERIAL, baudrate=BAUDRATE):
-    """Envia o arquivo G-code para a CNC via conexão Serial."""
     if not os.path.exists(caminho_gcode):
         raise FileNotFoundError(f"Arquivo não encontrado: {caminho_gcode}")
 
     comandos = []
-    for line in Path(caminho_gcode).read_text(encoding="ascii").splitlines():
+    # Correção da codificação UTF-8
+    for line in Path(caminho_gcode).read_text(encoding="utf-8").splitlines():
         cmd = line.strip()
         if cmd and not cmd.startswith(";") and not cmd.startswith("("):
             comandos.append(cmd)
@@ -189,15 +224,21 @@ def enviar_gcode_cnc(caminho_gcode, porta=PORTA_SERIAL, baudrate=BAUDRATE):
     print(f"\n[CNC] Conectando na porta {porta} ({baudrate} baud)...")
     try:
         with serial.Serial(porta, baudrate, timeout=5) as cnc:
-            time.sleep(2)  # Aguarda reinicialização do GRBL
+            time.sleep(2)
             cnc.reset_input_buffer()
+
+            st = _status(cnc)
+            print(f"[CNC] Estado inicial: {st or 'sem resposta'}")
+            if not st:
+                raise RuntimeError("A CNC não respondeu. Confira a porta e se o GRBL está ligado.")
+            if st.startswith("<Alarm"):
+                raise RuntimeError("A CNC está em ALARME. Destrave ($X) antes de continuar.")
 
             print(f"[CNC] Enviando {len(comandos)} comandos...")
             for i, cmd in enumerate(comandos, 1):
-                cnc.write((cmd + "\n").encode("ascii"))
+                cnc.write((cmd + "\n").encode("ascii", errors="ignore"))
                 cnc.flush()
 
-                # Aguarda confirmação 'ok' do GRBL
                 inicio = time.monotonic()
                 ok = False
                 while time.monotonic() - inicio < 5:
@@ -211,7 +252,7 @@ def enviar_gcode_cnc(caminho_gcode, porta=PORTA_SERIAL, baudrate=BAUDRATE):
                 if not ok:
                     raise TimeoutError(f"Sem resposta para o comando: {cmd}")
 
-                if i % 20 == 0 or i == len(comandos):
+                if i % 25 == 0 or i == len(comandos):
                     print(f"[CNC] Progresso: {i}/{len(comandos)} comandos enviados.")
 
         print("[CNC] Desenho concluído com sucesso!")
@@ -220,105 +261,97 @@ def enviar_gcode_cnc(caminho_gcode, porta=PORTA_SERIAL, baudrate=BAUDRATE):
 
 
 # ==============================================================================
-# 4. LOOP PRINCIPAL DE CAPTURA E INTERAÇÃO
+# 5. LOOP PRINCIPAL
 # ==============================================================================
 def main():
+    print("\n" + "=" * 60)
+    print(" SISTEMA DE IMPRESSÃO CNC - ESCOLHA O MODO")
+    print("=" * 60)
+    print(" [1] Tirar foto de um ROSTO (Retrato)")
+    print(" [2] Tirar foto de um DESENHO (Papel)")
+    print(" [Q] Sair")
+    print("-" * 60)
+
+    escolha = input("Digite a opção desejada (1, 2 ou Q): ").strip().lower()
+    if escolha == '1':
+        modo = "rosto"
+        print("\n[MODO] Selecionado: Retrato de Rosto.")
+    elif escolha == '2':
+        modo = "desenho"
+        print("\n[MODO] Selecionado: Cópia de Desenho.")
+    else:
+        print("Encerrando...")
+        sys.exit(0)
+
     cap = cv2.VideoCapture(0)
     if not cap.isOpened():
         print("Erro: Não foi possível acessar a câmera.")
         sys.exit(1)
 
-    print("\n" + "=" * 60)
-    print("SISTEMA DE RETRATO CNC")
-    print("Posicione o rosto no centro da tela.")
-    print("Pressione 'ESPAÇO' para capturar a foto.")
-    print("Pressione 'Q' para sair.")
-    print("=" * 60 + "\n")
+    print("\nPosicione o item no centro da câmera.")
+    print("Pressione 'ESPAÇO' para capturar ou 'Q' para sair.\n")
 
+    foto_capturada = None
     while True:
-        foto_capturada = None
-        while True:
-            ret, frame = cap.read()
-            if not ret:
-                print("Erro ao ler frame da câmera.")
-                cap.release()
-                sys.exit(1)
-
-            # Inverte espelhado para facilitar o enquadramento
-            frame = cv2.flip(frame, 1)
-
-            # 1. Pega a foto PURA antes de desenhar qualquer texto por cima
-            frame_limpo = frame.copy()
-
-            # Desenha guia visual e texto APENAS na tela de exibição da câmera
-            h, w, _ = frame.shape
-            lado = min(h, w)
-            x0, y0 = (w - lado) // 2, (h - lado) // 2
-            cv2.rectangle(frame, (x0, y0), (x0 + lado, y0 + lado), (0, 255, 0), 2)
-            cv2.putText(
-                frame, "Pressione ESPACO para capturar", (20, 40),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2
-            )
-
-            cv2.imshow("Camera - Retrato CNC", frame)
-
-            key = cv2.waitKey(1) & 0xFF
-            if key == ord(' '):  # Tecla ESPAÇO
-                # Salva a cópia limpa (sem o retângulo verde e sem o texto escritos)
-                foto_capturada = frame_limpo
-                print("\n[CAPTURADO] Foto registrada com sucesso!")
-                break
-            elif key == ord('q'):
-                print("Encerrado pelo usuário.")
-                cap.release()
-                cv2.destroyAllWindows()
-                sys.exit(0)
-
-        # Fecha a janela da câmera temporariamente para mostrar o resultado
-        cv2.destroyAllWindows()
-
-        print("[PROCESSANDO] Extraindo detalhes do rosto para vetores...")
-        _, visao_preto_branco, tracos = extrair_linhas_rosto(foto_capturada)
-
-        # Exibe a imagem processada em preto e branco
-        cv2.imshow("Pre-visualizacao (Preto e Branco)", visao_preto_branco)
-        print("\n" + "-" * 50)
-        print("[TECLAS] S = imprimir na CNC | N = tirar outra foto | Q = sair")
-        print("-" * 50)
-
-        # Pergunta ao operador pela própria janela do OpenCV (sem input(),
-        # para não competir com o console do main.py)
-        while True:
-            k = cv2.waitKey(0) & 0xFF
-            if k in (ord('s'), 13):  # S ou Enter
-                opcao = 's'
-                break
-            elif k == ord('n'):
-                opcao = 'n'
-                break
-            elif k == ord('q'):
-                print("Encerrado pelo usuário.")
-                cap.release()
-                cv2.destroyAllWindows()
-                sys.exit(0)
-
-        cv2.destroyAllWindows()
-
-        if opcao == 's':
-            try:
-                # Gera o G-code em 'img.gcode' e envia para a CNC
-                gcode_file = gerar_gcode_direto(tracos, img_size=(400, 400), arquivo_saida="img.gcode")
-                enviar_gcode_cnc(gcode_file)
-            except Exception as e:
-                print(f"\n[ERRO CRÍTICO]: {e}")
-            # Termina após imprimir: o controle volta para o main.py (Max)
+        ret, frame = cap.read()
+        if not ret:
+            print("Erro ao ler frame da câmera.")
             break
-        else:
-            print("\n[INFO] Descartando foto. Retornando para nova captura...\n")
-            continue
+
+        frame = cv2.flip(frame, 1)
+        frame_limpo = frame.copy()
+
+        h, w, _ = frame.shape
+        lado = min(h, w)
+        x0, y0 = (w - lado) // 2, (h - lado) // 2
+        cv2.rectangle(frame, (x0, y0), (x0 + lado, y0 + lado), (0, 255, 0), 2)
+        cv2.putText(
+            frame, f"Modo: {modo.upper()} - ESPACO para capturar", (20, 40),
+            cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2
+        )
+
+        cv2.imshow("Camera - CNC", frame)
+
+        key = cv2.waitKey(1) & 0xFF
+        if key == ord(' '):
+            foto_capturada = frame_limpo
+            print("\n[CAPTURADO] Foto registrada com sucesso!")
+            break
+        elif key == ord('q'):
+            print("Encerrado pelo usuário.")
+            cap.release()
+            cv2.destroyAllWindows()
+            sys.exit(0)
 
     cap.release()
     cv2.destroyAllWindows()
+
+    if foto_capturada is not None:
+        print(f"[PROCESSANDO] Extraindo traços limpos no modo '{modo}'...")
+        if modo == "rosto":
+            _, visao_pb, tracos = extrair_linhas_rosto(foto_capturada)
+        else:
+            _, visao_pb, tracos = extrair_linhas_desenho(foto_capturada)
+
+        cv2.imshow("Pre-visualizacao (Sem Ruido)", visao_pb)
+        print("\n" + "-" * 50)
+        print("[TECLAS] S = Enviar para CNC | N = Cancelar | Q = Sair")
+        print("-" * 50)
+
+        while True:
+            k = cv2.waitKey(0) & 0xFF
+            if k in (ord('s'), 13):
+                try:
+                    gcode_file = gerar_gcode_direto(tracos, img_size=(400, 400), arquivo_saida="img.gcode")
+                    enviar_gcode_cnc(gcode_file)
+                except Exception as e:
+                    print(f"\n[ERRO CRÍTICO]: {e}")
+                break
+            elif k in (ord('n'), ord('q')):
+                print("Operação cancelada.")
+                break
+
+        cv2.destroyAllWindows()
 
 
 if __name__ == "__main__":

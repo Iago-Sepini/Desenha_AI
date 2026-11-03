@@ -16,7 +16,7 @@ from ui.face import Face
 from ui.manager import GameManager
 from vision.svg_export import gerar_svg
 from vision.watcher import DrawingWatcher
-from voice.listener import Listener, listar_microfones, nome_do_microfone
+from voice.listener_Whisper import Listener, listar_microfones, nome_do_microfone
 from voice.speaker import Speaker
 from voice.tts import PiperTTS
 from server.state import FALANDO, PARADO, PENSANDO, State
